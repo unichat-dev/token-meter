@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pre-commit secret scan — blocks commits containing API keys or other secrets.
+# Setup: brew install gitleaks && git config core.hooksPath .githooks
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks is not installed (brew install gitleaks)." >&2
+    echo "Refusing to commit without a secret scan. To bypass ONCE (not recommended):" >&2
+    echo "  git commit --no-verify" >&2
+    exit 1
+fi
+
+gitleaks git --staged --redact --no-banner
+status=$?
+if [ $status -ne 0 ]; then
+    echo "" >&2
+    echo "pre-commit: possible secret detected — commit blocked." >&2
+    echo "If this is a false positive, add an allowlist entry to .gitleaks.toml." >&2
+fi
+exit $status

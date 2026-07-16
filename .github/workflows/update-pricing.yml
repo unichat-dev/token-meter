@@ -1,0 +1,31 @@
+name: Update pricing feed
+
+on:
+  schedule:
+    - cron: "17 5 * * *" # daily, off the top of the hour (GitHub cron etiquette)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate pricing feed
+        run: python3 pricing-feed/generate_pricing.py
+
+      - name: Commit if prices changed
+        run: |
+          if git diff --quiet; then
+            echo "No pricing changes."
+            exit 0
+          fi
+          git config user.name "tokenmeter-pricing-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add pricing-feed/pricing.json Resources/default-pricing.json
+          git commit -m "chore: update pricing feed"
+          git push

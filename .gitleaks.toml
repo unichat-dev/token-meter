@@ -1,0 +1,11 @@
+# gitleaks config — extends the default ruleset.
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fabricated fixture data (never contains real credentials)"
+paths = [
+    '''fixtures/.*\.jsonl$''',
+]
