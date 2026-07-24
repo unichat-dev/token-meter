@@ -16,6 +16,8 @@ AuthKey_*.p8
 sample-data/private/
 *.jsonl.local
 fixtures/real/
+# Release signing/notarization secrets (identity, team ID, API keys)
+scripts/release.env
 
 # ─────────────────────────────────────────────────────────────
 # Local planning / working notes — not part of the public repo
@@ -24,6 +26,15 @@ TASKS.md
 RESEARCH.md
 notes/
 *.local.md
+
+# ─────────────────────────────────────────────────────────────
+# Distribution / release material — kept local, NOT in the public repo.
+# The app source (and README screenshots) stay tracked; only the shipping
+# mechanics — release runbook + notarizing build script — are private.
+# ─────────────────────────────────────────────────────────────
+docs/RELEASE.md
+scripts/build-release.sh
+scripts/release.env.example
 
 # ─────────────────────────────────────────────────────────────
 # Xcode
@@ -37,7 +48,10 @@ Support/Info.plist
 
 ## Build generated
 build/
+dist/
 DerivedData/
+*.xcarchive
+ExportOptions.plist
 *.moved-aside
 *.pbxuser
 !default.pbxuser

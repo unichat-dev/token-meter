@@ -10,6 +10,13 @@ enum UsageProvider: String, Sendable, Codable, CaseIterable {
     case anthropicAPI = "anthropic-api" // Anthropic Usage & Cost API
     case openAIAPI = "openai-api"    // OpenAI Usage API + Costs endpoint
     case ollama = "ollama"           // local Ollama REST API
+
+    /// Whether usage from this provider has a monetary dimension. Local
+    /// models don't — their events carry exact token counts but must never
+    /// show up as "unpriced" gaps in cost totals.
+    var isMetered: Bool {
+        self != .ollama
+    }
 }
 
 /// How trustworthy a number is. This distinction is a product requirement
@@ -37,6 +44,20 @@ struct TokenCounts: Sendable, Codable, Equatable {
     var total: Int { input + output + cacheRead + cacheCreation }
 }
 
+/// Request timing, reported by local runtimes (Ollama). Nanoseconds, as the
+/// API reports them. Session-scoped: shown live for latency/throughput but
+/// not persisted with the event history.
+struct EventTiming: Sendable, Codable, Equatable {
+    var totalDurationNanos: Int64?
+    var evalDurationNanos: Int64?
+
+    /// Generation speed for `outputTokens` produced in `evalDurationNanos`.
+    func tokensPerSecond(outputTokens: Int) -> Double? {
+        guard let evalDurationNanos, evalDurationNanos > 0, outputTokens > 0 else { return nil }
+        return Double(outputTokens) / (Double(evalDurationNanos) / 1_000_000_000)
+    }
+}
+
 /// One normalized usage event — the shared currency between data sources,
 /// persistence, rollups, and UI. SwiftData models persist this
 /// shape; sources emit it.
@@ -53,4 +74,26 @@ struct UsageEvent: Sendable, Codable, Equatable, Identifiable {
     /// because API- and Ollama-sourced events have no project notion.
     let project: String?
     let tokens: TokenCounts
+    /// Latency/throughput info where the source reports it (Ollama).
+    var timing: EventTiming?
+
+    init(
+        id: String,
+        provider: UsageProvider,
+        accuracy: UsageAccuracy,
+        timestamp: Date,
+        model: String,
+        project: String?,
+        tokens: TokenCounts,
+        timing: EventTiming? = nil
+    ) {
+        self.id = id
+        self.provider = provider
+        self.accuracy = accuracy
+        self.timestamp = timestamp
+        self.model = model
+        self.project = project
+        self.tokens = tokens
+        self.timing = timing
+    }
 }

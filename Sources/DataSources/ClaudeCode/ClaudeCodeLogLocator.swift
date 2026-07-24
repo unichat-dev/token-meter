@@ -19,7 +19,7 @@ enum LogAccessStatus: Equatable, Sendable {
 ///
 /// Default root is `~/.claude/projects`; a user override
 /// (Settings → Data Sources) takes precedence. Tilde is expanded.
-struct ClaudeCodeLogLocator: Sendable {
+struct ClaudeCodeLogLocator: JSONLLogLocating, Sendable {
     /// Raw override string from preferences; `nil`/empty means default.
     let pathOverride: String?
 

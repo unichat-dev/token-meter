@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- DEBUG / ad-hoc variant: sandbox only. Widget extensions run sandboxed
+	     and can only read their own container — never ~/.claude or anything
+	     else of the user's.
+
+	     The Release (Developer ID) build adds the shared App Group via
+	     TokenMeterWidget.release.entitlements so the widget can read the
+	     snapshot the app writes into Group Containers. App Groups require a
+	     signing certificate, which ad-hoc builds from source don't have — so
+	     the group entitlement is kept out of this Debug variant on purpose. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+</dict>
+</plist>

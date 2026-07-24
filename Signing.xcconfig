@@ -1,0 +1,12 @@
+// Signing configuration for the app target.
+//
+// I keep my actual Apple team / identity out of this open-source repo. The
+// real values live in Secrets.xcconfig (git-ignored). The include below is
+// optional — if that file isn't present (anyone building from source), the
+// build just signs ad-hoc / "to run locally", which is fine for them.
+//
+// Why this matters: macOS remembers the "access data from other apps" grant
+// only for a stable signing identity. Ad-hoc builds get a new identity every
+// launch, so macOS re-asks every time. A real (even Development) identity in
+// Secrets.xcconfig makes the grant stick between launches.
+#include? "Secrets.xcconfig"

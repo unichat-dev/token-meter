@@ -11,7 +11,7 @@ import Foundation
 ///
 /// All produced events are ``UsageAccuracy/estimated``: these logs are known
 /// to under-report tokens.
-struct ClaudeCodeLogParser {
+struct ClaudeCodeLogParser: UsageLineParsing {
     private let decoder = JSONDecoder()
 
     init() {}

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Release (Developer ID) widget entitlements: sandboxed like every
+	     widget extension, PLUS the shared App Group so it can read the
+	     snapshot the app writes into Group Containers.
+
+	     App Groups require a signing certificate + provisioning, so this is
+	     the Release-only variant; Debug/ad-hoc uses the group-free
+	     TokenMeterWidget.entitlements (sandbox only). -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.unichatdigital.tokenmeter</string>
+	</array>
+</dict>
+</plist>

@@ -29,7 +29,7 @@ struct PricingServiceTests {
             try Data(feedJSON().utf8).write(to: feedFile)
 
             let service = PricingService(directory: dir)
-            let refreshed = try #require(await service.refresh(from: feedFile))
+            let refreshed = try #require(await service.refresh(from: feedFile, format: .tokenMeter))
             #expect(refreshed.status.origin == .remote)
             #expect(refreshed.table.models["claude-opus-4-8"]?.inputPerMTok == 15)
 
@@ -52,15 +52,15 @@ struct PricingServiceTests {
             try Data("""
             {"schemaVersion": 1, "generatedAt": "2026-07-16T00:00:00Z", "source": "t", "models": {"a": {"inputPerMTok": 1, "outputPerMTok": 2}}}
             """.utf8).write(to: tooFew)
-            #expect(await service.refresh(from: tooFew) == nil)
+            #expect(await service.refresh(from: tooFew, format: .tokenMeter) == nil)
 
             let futureSchema = dir.appending(path: "future.json")
             try Data(feedJSON().replacingOccurrences(of: "\"schemaVersion\": 1", with: "\"schemaVersion\": 99").utf8)
                 .write(to: futureSchema)
-            #expect(await service.refresh(from: futureSchema) == nil)
+            #expect(await service.refresh(from: futureSchema, format: .tokenMeter) == nil)
 
             let missing = dir.appending(path: "nope.json")
-            #expect(await service.refresh(from: missing) == nil)
+            #expect(await service.refresh(from: missing, format: .tokenMeter) == nil)
         }
     }
 
@@ -74,7 +74,7 @@ struct PricingServiceTests {
             let relaunched = PricingService(directory: dir)
             let feedFile = dir.appending(path: "feed.json")
             try Data(feedJSON().utf8).write(to: feedFile)
-            let result = try #require(await relaunched.refresh(from: feedFile))
+            let result = try #require(await relaunched.refresh(from: feedFile, format: .tokenMeter))
             #expect(result.overrides["my-model"] == custom)
         }
     }
@@ -87,7 +87,7 @@ struct PricingServiceTests {
 
             let feedFile = dir.appending(path: "feed.json")
             try Data(feedJSON().utf8).write(to: feedFile)
-            _ = await service.refresh(from: feedFile)
+            _ = await service.refresh(from: feedFile, format: .tokenMeter)
             #expect(await !service.isDue)
         }
     }

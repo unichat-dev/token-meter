@@ -4,12 +4,7 @@
 import Charts
 import SwiftUI
 
-/// Window scene identifiers.
-enum WindowID {
-    static let details = "details"
-}
-
-/// Which calendar period the details window shows.
+/// Which calendar period the history view shows.
 enum DetailsPeriod: String, CaseIterable, Identifiable {
     case day = "Day"
     case week = "Week"
@@ -34,10 +29,10 @@ enum DetailsPeriod: String, CaseIterable, Identifiable {
     }
 }
 
-/// Usage history window: tokens and estimated cost over time, per-model and
+/// Usage history: tokens and estimated cost over time, per-model and
 /// per-project breakdowns, day/week/month navigation. All numbers are
-/// log-derived estimates.
-struct DetailsWindowView: View {
+/// log-derived estimates. Embedded as the main window's "History" pane.
+struct HistoryView: View {
     @Environment(AppModel.self) private var model
 
     @State private var period: DetailsPeriod = .day
@@ -93,10 +88,7 @@ struct DetailsWindowView: View {
             footerNote
         }
         .padding(20)
-        .frame(minWidth: 640, minHeight: 520)
-        .onAppear {
-            model.refreshNow()
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Header / period navigation
@@ -365,6 +357,6 @@ struct DetailsWindowView: View {
 }
 
 #Preview {
-    DetailsWindowView()
+    HistoryView()
         .environment(AppModel())
 }

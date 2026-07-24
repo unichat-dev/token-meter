@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Release (Developer ID) only. The app is intentionally NOT sandboxed
+	     (it needs Full Disk Access to read ~/.claude), but it declares this
+	     App Group so it can write the widget snapshot into the shared
+	     Group Containers directory that the sandboxed widget reads.
+
+	     Requires a real signing certificate + provisioning, so it is applied
+	     to the Release config only — Debug/ad-hoc builds from source omit it. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.unichatdigital.tokenmeter</string>
+	</array>
+</dict>
+</plist>

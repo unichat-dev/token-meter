@@ -10,7 +10,6 @@ import SwiftUI
 struct MenuBarDashboardView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
     @Environment(\.dismiss) private var dismiss
 
     private var summary: UsageSummary { model.todaySummary }
@@ -40,7 +39,7 @@ struct MenuBarDashboardView: View {
 
     private var header: some View {
         HStack {
-            Label("TokenMeter", systemImage: "gauge.with.needle")
+            Label("Token Meter", systemImage: "gauge.with.needle")
                 .font(.headline)
             Spacer()
             EstimatedBadge()
@@ -210,6 +209,37 @@ struct MenuBarDashboardView: View {
                     .contentTransition(.numericText())
                     .help("\(model.weekSummary.tokens.total.formatted()) tokens this calendar week (estimated)")
             }
+
+            if showsOllamaRow {
+                ollamaRow
+            }
+        }
+    }
+
+    // MARK: - Local models (Ollama)
+
+    private var showsOllamaRow: Bool {
+        guard model.isOllamaTrackingEnabled else { return false }
+        if case .running = model.ollamaState.server { return true }
+        return model.ollamaTodayTokens > 0
+    }
+
+    private var ollamaRow: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Label("Local (Ollama)", systemImage: "desktopcomputer")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            if let rate = model.ollamaTokensPerSecond {
+                Text("\(rate, format: .number.precision(.fractionLength(0))) tok/s")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .help("Average generation speed over recent local requests (this session).")
+            }
+            Text(model.ollamaTodayTokens, format: .number.notation(.compactName))
+                .font(.system(.callout, design: .rounded, weight: .semibold))
+                .contentTransition(.numericText())
+                .help("\(model.ollamaTodayTokens.formatted()) local-model tokens today (measured, no cost). Captured via the proxy — see Settings → Data Sources.")
         }
     }
 
@@ -261,21 +291,17 @@ struct MenuBarDashboardView: View {
     private var footer: some View {
         HStack {
             Button {
-                openWindow(id: WindowID.details)
-                activateApp()
-                dismiss()
+                open(.overview)
             } label: {
-                Label("Details…", systemImage: "chart.bar.xaxis")
+                Label("Open Token Meter", systemImage: "macwindow")
             }
 
             Spacer()
 
             Button {
-                openSettings()
-                activateApp()
-                dismiss()
+                open(.settings)
             } label: {
-                Label("Settings…", systemImage: "gear")
+                Label("Settings", systemImage: "gear")
             }
 
             Button("Quit") {
@@ -284,6 +310,14 @@ struct MenuBarDashboardView: View {
             .keyboardShortcut("q")
         }
         .controlSize(.small)
+    }
+
+    /// Opens the centralized main window on `section`.
+    private func open(_ section: MainSection) {
+        model.mainSelection = section
+        openWindow(id: WindowID.main)
+        activateApp()
+        dismiss()
     }
 
     /// LSUIElement apps are "accessory" processes — without an explicit

@@ -101,6 +101,9 @@ enum CostEngine {
     static func totals(for events: [UsageEvent], resolver: ResolvedPricing) -> Totals {
         var totals = Totals()
         for event in events {
+            // Local models (Ollama) have no cost by nature — skip them
+            // entirely rather than flagging them as pricing gaps.
+            guard event.provider.isMetered else { continue }
             if let pricing = resolver.pricing(for: event.model) {
                 totals.cost += cost(tokens: event.tokens, pricing: pricing)
                 totals.pricedEventCount += 1

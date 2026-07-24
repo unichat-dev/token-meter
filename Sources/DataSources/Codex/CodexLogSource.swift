@@ -3,26 +3,26 @@
 
 import Foundation
 
-/// The Claude Code data source: backfills existing JSONL logs, then follows
-/// them live. A thin configuration over the shared ``JSONLLogWatchSource`` —
-/// the watch/read loop is provider-agnostic; only the locator and parser
-/// differ.
+/// The Codex CLI data source: backfills existing rollout logs, then follows
+/// them live. Like ``ClaudeCodeLogSource``, a thin configuration over the
+/// shared ``JSONLLogWatchSource`` — same offset/inode-aware incremental
+/// reading and Full Disk Access handling, a Codex-specific locator + parser.
 ///
 /// Every yielded event is `accuracy: .estimated` by construction (parser).
-struct ClaudeCodeLogSource: UsageEventSource {
-    nonisolated var provider: UsageProvider { .claudeCode }
+struct CodexLogSource: UsageEventSource {
+    nonisolated var provider: UsageProvider { .codexCLI }
 
     private let core: JSONLLogWatchSource
 
     init(
-        locator: ClaudeCodeLogLocator,
+        locator: CodexLogLocator,
         watcher: any DirectoryWatching = FSEventsWatcher(),
         rootPollInterval: Duration = .seconds(10)
     ) {
         core = JSONLLogWatchSource(
-            provider: .claudeCode,
+            provider: .codexCLI,
             locator: locator,
-            parser: ClaudeCodeLogParser(),
+            parser: CodexLogParser(),
             watcher: watcher,
             rootPollInterval: rootPollInterval
         )

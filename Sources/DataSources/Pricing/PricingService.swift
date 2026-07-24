@@ -33,6 +33,8 @@ actor PricingService {
     private let directory: URL
     private var cachedETag: String?
     private var lastFetchAt: Date?
+    /// The URL the current `cachedETag` belongs to (see `refresh`).
+    private var lastFeedURL: URL?
 
     init(directory: URL) {
         self.directory = directory
@@ -89,8 +91,17 @@ actor PricingService {
     }
 
     /// Fetches the feed. Returns `nil` when unchanged (HTTP 304) or on any
-    /// failure — the current table simply stays in effect.
-    func refresh(from feedURL: URL) async -> LoadResult? {
+    /// failure — the current table simply stays in effect. `format` says how to
+    /// decode the payload (our compact schema vs. LiteLLM's raw table).
+    func refresh(from feedURL: URL, format: PricingFeedFormat) async -> LoadResult? {
+        // A cached ETag only means anything against the URL that produced it —
+        // switching pricing source in Settings must not carry it over, or the
+        // new source could 304 and leave the old source's prices in place.
+        if feedURL != lastFeedURL {
+            cachedETag = nil
+            lastFeedURL = feedURL
+        }
+
         var request = URLRequest(url: feedURL, timeoutInterval: 30)
         if let cachedETag {
             request.setValue(cachedETag, forHTTPHeaderField: "If-None-Match")
@@ -108,7 +119,14 @@ actor PricingService {
                     return nil
                 }
             }
-            let table = try PricingTable.decoder.decode(PricingTable.self, from: data)
+            let table: PricingTable
+            switch format {
+            case .tokenMeter:
+                table = try PricingTable.decoder.decode(PricingTable.self, from: data)
+            case .liteLLM:
+                guard let parsed = LiteLLMPricingParser.parse(data) else { return nil }
+                table = parsed
+            }
             guard table.schemaVersion == 1, table.models.count >= 20 else {
                 // Schema from the future or a suspicious payload: keep what
                 // we have rather than degrade silently.

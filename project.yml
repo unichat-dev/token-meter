@@ -20,7 +20,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     DEAD_CODE_STRIPPING: YES
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
   configs:
     debug:
@@ -35,31 +35,97 @@ targets:
     sources:
       - path: Sources
         excludes:
-          - "Widget/**" # WidgetKit extension gets its own target later
+          - "Widget/**" # compiled into the TokenMeterWidget target instead
       - path: Resources
         buildPhase: resources
+    dependencies:
+      - target: TokenMeterWidget
+        embed: true
+    # Signing identity lives in a git-ignored Secrets.xcconfig (optional
+    # include) so my Apple team/identity never lands in this OSS repo. Without
+    # it the build just signs ad-hoc — fine for anyone building from source.
+    #
+    # Debug ONLY: the manual dev identity keeps the file-access (TCC) grant
+    # persistent between local launches. Release is left unmanaged here so the
+    # notarized `make release` archive can use automatic Developer ID signing
+    # (a forced manual identity would conflict with automatic signing).
+    configFiles:
+      Debug: Signing.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.unichatdigital.tokenmeter
+        # Bundle/product name stays one word; only the user-facing name has a
+        # space (CFBundleDisplayName / CFBundleName below).
         PRODUCT_NAME: TokenMeter
-        CODE_SIGN_STYLE: Automatic
         COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        # App Group entitlement only on Release: it lets the (unsandboxed) app
+        # write the widget snapshot into the shared Group Containers dir the
+        # widget reads. Needs a real cert, so Debug/ad-hoc builds omit it.
+        release:
+          CODE_SIGN_ENTITLEMENTS: Support/TokenMeter.release.entitlements
     info:
       path: Support/Info.plist
       properties:
-        CFBundleDisplayName: TokenMeter
+        CFBundleDisplayName: Token Meter
+        CFBundleName: Token Meter
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         # Menu-bar-only app: no Dock icon, no app switcher entry.
         LSUIElement: true
+        # Only one copy may run at a time; relaunching reactivates the running
+        # instance instead of spawning a second menu-bar icon.
+        LSMultipleInstancesProhibited: true
         LSApplicationCategoryType: public.app-category.developer-tools
         LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
         NSHumanReadableCopyright: "Copyright © 2026 UniChat Dev - Ilhan Akbudak. Apache-2.0."
+
+  TokenMeterWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Sources/Widget
+      - path: Sources/Shared
+    info:
+      path: Support/WidgetInfo.plist
+      properties:
+        CFBundleDisplayName: Token Meter Widget
+        # MUST match the containing app — a version mismatch makes WidgetKit
+        # silently drop the extension from the widget gallery. (XcodeGen
+        # otherwise defaults these to 1.0/1, which won't match the app.)
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    # Must sign with the same identity as the host app (an embedded extension
+    # signed differently fails the bundle seal). Debug uses the same optional
+    # Secrets.xcconfig (ad-hoc together when absent); Release is left unmanaged
+    # so it inherits the app's automatic Developer ID signing during archive.
+    configFiles:
+      Debug: Signing.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unichatdigital.tokenmeter.widget
+        PRODUCT_NAME: TokenMeterWidget
+        SKIP_INSTALL: YES
+      configs:
+        # Debug/ad-hoc: sandbox only (no cert needed). Release: sandbox + the
+        # shared App Group so the widget can read the app's snapshot.
+        debug:
+          CODE_SIGN_ENTITLEMENTS: Support/TokenMeterWidget.entitlements
+        release:
+          CODE_SIGN_ENTITLEMENTS: Support/TokenMeterWidget.release.entitlements
 
   TokenMeterTests:
     type: bundle.unit-test
     platform: macOS
     sources: [Tests]
+    # Same identity as the host app — XCTest injection needs matching team IDs
+    # (ad-hoc together when Secrets.xcconfig is absent).
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
