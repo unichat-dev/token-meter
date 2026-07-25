@@ -1,6 +1,6 @@
 {
  "schemaVersion": 1,
- "generatedAt": "2026-07-16T18:40:31Z",
+ "generatedAt": "2026-07-25T07:28:37Z",
  "source": "litellm/model_prices_and_context_window.json (MIT)",
  "note": "Community-maintained estimates, not vendor invoices.",
  "models": {
@@ -111,6 +111,12 @@
    "cacheWritePerMTok": 6.25
   },
   "claude-opus-4-8": {
+   "inputPerMTok": 5.0,
+   "outputPerMTok": 25.0,
+   "cacheReadPerMTok": 0.5,
+   "cacheWritePerMTok": 6.25
+  },
+  "claude-opus-5": {
    "inputPerMTok": 5.0,
    "outputPerMTok": 25.0,
    "cacheReadPerMTok": 0.5,
@@ -279,16 +285,6 @@
    "inputPerMTok": 0.15,
    "outputPerMTok": 0.6
   },
-  "gpt-4o-mini-realtime-preview": {
-   "inputPerMTok": 0.6,
-   "outputPerMTok": 2.4,
-   "cacheReadPerMTok": 0.3
-  },
-  "gpt-4o-mini-realtime-preview-2024-12-17": {
-   "inputPerMTok": 0.6,
-   "outputPerMTok": 2.4,
-   "cacheReadPerMTok": 0.3
-  },
   "gpt-4o-mini-search-preview": {
    "inputPerMTok": 0.15,
    "outputPerMTok": 0.6,
@@ -298,21 +294,6 @@
    "inputPerMTok": 0.15,
    "outputPerMTok": 0.6,
    "cacheReadPerMTok": 0.075
-  },
-  "gpt-4o-realtime-preview": {
-   "inputPerMTok": 5.0,
-   "outputPerMTok": 20.0,
-   "cacheReadPerMTok": 2.5
-  },
-  "gpt-4o-realtime-preview-2024-12-17": {
-   "inputPerMTok": 5.0,
-   "outputPerMTok": 20.0,
-   "cacheReadPerMTok": 2.5
-  },
-  "gpt-4o-realtime-preview-2025-06-03": {
-   "inputPerMTok": 5.0,
-   "outputPerMTok": 20.0,
-   "cacheReadPerMTok": 2.5
   },
   "gpt-4o-search-preview": {
    "inputPerMTok": 2.5,
@@ -562,50 +543,6 @@
   "gpt-audio-mini-2025-12-15": {
    "inputPerMTok": 0.6,
    "outputPerMTok": 2.4
-  },
-  "gpt-realtime": {
-   "inputPerMTok": 4.0,
-   "outputPerMTok": 16.0,
-   "cacheReadPerMTok": 0.4
-  },
-  "gpt-realtime-1.5": {
-   "inputPerMTok": 4.0,
-   "outputPerMTok": 16.0,
-   "cacheReadPerMTok": 0.4
-  },
-  "gpt-realtime-2": {
-   "inputPerMTok": 4.0,
-   "outputPerMTok": 16.0,
-   "cacheReadPerMTok": 0.4
-  },
-  "gpt-realtime-2.1": {
-   "inputPerMTok": 4.0,
-   "outputPerMTok": 24.0,
-   "cacheReadPerMTok": 0.4
-  },
-  "gpt-realtime-2.1-mini": {
-   "inputPerMTok": 0.6,
-   "outputPerMTok": 2.4,
-   "cacheReadPerMTok": 0.06
-  },
-  "gpt-realtime-2025-08-28": {
-   "inputPerMTok": 4.0,
-   "outputPerMTok": 16.0,
-   "cacheReadPerMTok": 0.4
-  },
-  "gpt-realtime-mini": {
-   "inputPerMTok": 0.6,
-   "outputPerMTok": 2.4
-  },
-  "gpt-realtime-mini-2025-10-06": {
-   "inputPerMTok": 0.6,
-   "outputPerMTok": 2.4,
-   "cacheReadPerMTok": 0.06
-  },
-  "gpt-realtime-mini-2025-12-15": {
-   "inputPerMTok": 0.6,
-   "outputPerMTok": 2.4,
-   "cacheReadPerMTok": 0.06
   },
   "o1": {
    "inputPerMTok": 15.0,
