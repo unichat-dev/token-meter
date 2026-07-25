@@ -48,7 +48,7 @@ Download the latest **notarized** `TokenMeter-<version>.dmg`, open it, and drag 
 ### Build from source
 
 ```sh
-git clone https://github.com/unichat-dev/tokenmeter.git
+git clone https://github.com/unichat-dev/token-meter.git
 cd tokenmeter
 make bootstrap   # installs xcodegen + gitleaks, wires the pre-commit hook, generates the Xcode project
 make build       # or: make test
