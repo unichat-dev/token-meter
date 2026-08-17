@@ -74,9 +74,14 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         # Menu-bar-only app: no Dock icon, no app switcher entry.
         LSUIElement: true
-        # Only one copy may run at a time; relaunching reactivates the running
-        # instance instead of spawning a second menu-bar icon.
-        LSMultipleInstancesProhibited: true
+        # NOTE: LSMultipleInstancesProhibited is deliberately NOT set.
+        # LaunchServices enforces it before any of our code runs, which also
+        # blocks the app-hosted XCTest bundle from launching whenever the
+        # installed app happens to be open — `make test` then fails with an
+        # opaque LaunchServices error. Single-instance behaviour is instead
+        # enforced in AppDelegate.applicationWillFinishLaunching, which hands
+        # off to the running copy and exits, and which knows to stand down
+        # under XCTest.
         LSApplicationCategoryType: public.app-category.developer-tools
         LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
         NSHumanReadableCopyright: "Copyright © 2026 UniChat Dev - Ilhan Akbudak. Apache-2.0."

@@ -174,8 +174,13 @@ private struct MenuBarLabel: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// If another copy of TokenMeter is already running, hand off to it and
     /// quit — so launching the app twice never yields two menu-bar icons.
-    /// (`LSMultipleInstancesProhibited` blocks the common Finder/Dock relaunch;
-    /// this covers launches from a different path or `open -n`.)
+    ///
+    /// This is the *only* single-instance mechanism: the
+    /// `LSMultipleInstancesProhibited` Info.plist key would enforce the same
+    /// rule earlier, but LaunchServices applies it to the app-hosted test
+    /// runner too, making `make test` fail whenever the app is open (see
+    /// `project.yml`). Doing it here keeps the guarantee for real launches
+    /// while letting tests run.
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Never hand off + terminate while hosting tests: the "already running"
         // instance would be the user's installed app, and terminating would

@@ -44,13 +44,40 @@ struct HistoryView: View {
     /// Claude Code records session, branch, agent and skill on every line, so
     /// the history pane can answer "what did this branch cost" or "which
     /// subagent burns the most tokens" — not just "which model".
-    enum BreakdownDimension: String, CaseIterable {
-        case model = "By model"
-        case project = "By project"
-        case branch = "By branch"
-        case session = "By session"
-        case agent = "By agent"
-        case skill = "By skill"
+    enum BreakdownDimension: String, CaseIterable, Identifiable {
+        case model
+        case project
+        case branch
+        case session
+        case agent
+        case skill
+
+        var id: String { rawValue }
+
+        /// Bare nouns, not "By model": the control sits next to a "Breakdown"
+        /// label that already supplies the preposition, and six long labels
+        /// don't fit a segmented control.
+        var label: String {
+            switch self {
+            case .model: "Model"
+            case .project: "Project"
+            case .branch: "Branch"
+            case .session: "Session"
+            case .agent: "Agent"
+            case .skill: "Skill"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .model: "cpu"
+            case .project: "folder"
+            case .branch: "arrow.triangle.branch"
+            case .session: "bubble.left.and.bubble.right"
+            case .agent: "person.2"
+            case .skill: "wand.and.stars"
+            }
+        }
     }
 
     enum ChartMetric: String, CaseIterable {
@@ -109,7 +136,10 @@ struct HistoryView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 240)
+            // Sized by content with a ceiling, rather than pinned at 240pt —
+            // a fixed width is what pushes the rest of the row off screen in a
+            // narrow window.
+            .frame(minWidth: 170, maxWidth: 240)
             .onChange(of: period) {
                 periodOffset = 0
             }
@@ -131,15 +161,19 @@ struct HistoryView: View {
 
             Text(intervalLabel)
                 .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(1)
 
             if periodOffset != 0 {
                 Button("Now") { periodOffset = 0 }
                     .controlSize(.small)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
             exportMenu
             EstimatedBadge()
+                .layoutPriority(1)
         }
     }
 
@@ -358,14 +392,18 @@ struct HistoryView: View {
                 Text("Breakdown")
                     .font(.subheadline.weight(.medium))
                 Spacer()
+                // A menu, not a segmented control: six dimensions with real
+                // words won't fit a fixed-width strip at any window size, and
+                // clipping them to "By pr…" makes the feature unusable.
                 Picker("Breakdown", selection: $breakdownDimension) {
-                    ForEach(BreakdownDimension.allCases, id: \.self) { dimension in
-                        Text(dimension.rawValue).tag(dimension)
+                    ForEach(BreakdownDimension.allCases) { dimension in
+                        Label(dimension.label, systemImage: dimension.systemImage)
+                            .tag(dimension)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 200)
+                .fixedSize()
             }
             Chart(breakdownRows) { row in
                 BarMark(
