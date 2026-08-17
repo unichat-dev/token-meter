@@ -39,9 +39,74 @@ struct TokenCounts: Sendable, Codable, Equatable {
     var input: Int = 0
     var output: Int = 0
     var cacheRead: Int = 0
+    /// **Total** cache-creation (write) tokens, as reported by the provider's
+    /// flat `cache_creation_input_tokens` field.
     var cacheCreation: Int = 0
 
+    // Cache writes are billed by how long the entry lives: Anthropic charges
+    // 1.25x base input for a 5-minute entry but 2x for a 1-hour one. The two
+    // fields below **break down** `cacheCreation` — they are not additive with
+    // it, and `total` deliberately ignores them so it can't double-count.
+    // Sources that don't report the split leave both at zero and get billed at
+    // the flat write rate.
+
+    /// Portion of `cacheCreation` written with a 5-minute TTL.
+    var cacheCreation5m: Int = 0
+    /// Portion of `cacheCreation` written with a 1-hour TTL.
+    var cacheCreation1h: Int = 0
+
+    /// Cache-creation tokens the provider didn't attribute to a TTL tier.
+    /// Billed at the flat write rate. Clamped at zero so a provider reporting
+    /// tiers that overshoot the total can never produce negative cost.
+    var cacheCreationUntiered: Int {
+        max(0, cacheCreation - cacheCreation5m - cacheCreation1h)
+    }
+
     var total: Int { input + output + cacheRead + cacheCreation }
+
+    /// Accumulates every tier at once. Rollups use this rather than adding
+    /// fields by hand, so a tier added later can't be silently dropped from a
+    /// summary — which would understate cost the moment a summary is priced.
+    static func += (lhs: inout TokenCounts, rhs: TokenCounts) {
+        lhs.input += rhs.input
+        lhs.output += rhs.output
+        lhs.cacheRead += rhs.cacheRead
+        lhs.cacheCreation += rhs.cacheCreation
+        lhs.cacheCreation5m += rhs.cacheCreation5m
+        lhs.cacheCreation1h += rhs.cacheCreation1h
+    }
+
+    /// Inverse of `+=`, so an aggregate can have a superseded event backed out
+    /// of it without a full rebuild.
+    static func -= (lhs: inout TokenCounts, rhs: TokenCounts) {
+        lhs.input -= rhs.input
+        lhs.output -= rhs.output
+        lhs.cacheRead -= rhs.cacheRead
+        lhs.cacheCreation -= rhs.cacheCreation
+        lhs.cacheCreation5m -= rhs.cacheCreation5m
+        lhs.cacheCreation1h -= rhs.cacheCreation1h
+    }
+}
+
+/// Provider-side tool invocations billed **per request**, not per token
+/// (Anthropic's server-side web search and web fetch tools).
+struct ServerToolUse: Sendable, Codable, Equatable {
+    var webSearchRequests: Int = 0
+    /// Recorded for display only — Anthropic bills web fetch through the
+    /// tokens it returns, with no separate per-request charge.
+    var webFetchRequests: Int = 0
+
+    var isEmpty: Bool { webSearchRequests == 0 && webFetchRequests == 0 }
+
+    static func += (lhs: inout ServerToolUse, rhs: ServerToolUse) {
+        lhs.webSearchRequests += rhs.webSearchRequests
+        lhs.webFetchRequests += rhs.webFetchRequests
+    }
+
+    static func -= (lhs: inout ServerToolUse, rhs: ServerToolUse) {
+        lhs.webSearchRequests -= rhs.webSearchRequests
+        lhs.webFetchRequests -= rhs.webFetchRequests
+    }
 }
 
 /// Request timing, reported by local runtimes (Ollama). Nanoseconds, as the
@@ -55,6 +120,30 @@ struct EventTiming: Sendable, Codable, Equatable {
     func tokensPerSecond(outputTokens: Int) -> Double? {
         guard let evalDurationNanos, evalDurationNanos > 0, outputTokens > 0 else { return nil }
         return Double(outputTokens) / (Double(evalDurationNanos) / 1_000_000_000)
+    }
+}
+
+/// Where inside a coding session the usage came from.
+///
+/// Claude Code already records all of this per line; capturing it is what lets
+/// the app answer "what did this branch cost" or "which subagent burns the most
+/// tokens" — questions a per-model total can't touch. Every field is optional
+/// because other providers report none of it.
+struct UsageAttribution: Sendable, Codable, Equatable {
+    /// The CLI session the turn belonged to.
+    var sessionID: String?
+    /// Git branch checked out at the time.
+    var gitBranch: String?
+    /// Subagent type that produced the turn (e.g. "general-purpose", "Explore").
+    var agent: String?
+    /// Skill in effect for the turn.
+    var skill: String?
+    /// Whether the turn ran on a sidechain — a subagent thread rather than the
+    /// main conversation.
+    var isSidechain: Bool = false
+
+    var isEmpty: Bool {
+        sessionID == nil && gitBranch == nil && agent == nil && skill == nil && !isSidechain
     }
 }
 
@@ -74,6 +163,10 @@ struct UsageEvent: Sendable, Codable, Equatable, Identifiable {
     /// because API- and Ollama-sourced events have no project notion.
     let project: String?
     let tokens: TokenCounts
+    /// Per-request server tool calls billed on top of tokens.
+    let serverToolUse: ServerToolUse
+    /// Session / branch / agent / skill context, where the source reports it.
+    let attribution: UsageAttribution
     /// Latency/throughput info where the source reports it (Ollama).
     var timing: EventTiming?
 
@@ -85,6 +178,8 @@ struct UsageEvent: Sendable, Codable, Equatable, Identifiable {
         model: String,
         project: String?,
         tokens: TokenCounts,
+        serverToolUse: ServerToolUse = ServerToolUse(),
+        attribution: UsageAttribution = UsageAttribution(),
         timing: EventTiming? = nil
     ) {
         self.id = id
@@ -94,6 +189,8 @@ struct UsageEvent: Sendable, Codable, Equatable, Identifiable {
         self.model = model
         self.project = project
         self.tokens = tokens
+        self.serverToolUse = serverToolUse
+        self.attribution = attribution
         self.timing = timing
     }
 }

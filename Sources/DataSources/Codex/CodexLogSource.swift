@@ -14,17 +14,21 @@ struct CodexLogSource: UsageEventSource {
 
     private let core: JSONLLogWatchSource
 
+    /// - Parameter stateStore: persists read offsets between launches. Defaults
+    ///   to the on-disk store; tests pass `nil` to stay hermetic.
     init(
         locator: CodexLogLocator,
         watcher: any DirectoryWatching = FSEventsWatcher(),
-        rootPollInterval: Duration = .seconds(10)
+        rootPollInterval: Duration = .seconds(10),
+        stateStore: ScanStateStore? = ScanStateStore(provider: .codexCLI)
     ) {
         core = JSONLLogWatchSource(
             provider: .codexCLI,
             locator: locator,
             parser: CodexLogParser(),
             watcher: watcher,
-            rootPollInterval: rootPollInterval
+            rootPollInterval: rootPollInterval,
+            stateStore: stateStore
         )
     }
 

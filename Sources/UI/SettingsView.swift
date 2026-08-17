@@ -29,6 +29,23 @@ enum PreferenceKey {
     static let dockIconMode = "dockIconMode"
     /// Whether the always-on-top floating widget ("pin to screen") is shown.
     static let floatingHUDEnabled = "floatingHUDEnabled"
+    /// Raw `SubscriptionPlan` — what the user pays for their AI tools.
+    static let subscriptionPlan = "subscriptionPlan"
+    /// Monthly plan price in USD (Double in defaults, Decimal in use).
+    static let planMonthlyPriceUSD = "planMonthlyPriceUSD"
+    /// Day of month the subscription renews (1...28).
+    static let planCycleStartDay = "planCycleStartDay"
+    /// Raw `MenuBarMetric` — what the status item shows beside its icon.
+    static let menuBarMetric = "menuBarMetric"
+    /// Whether the main window opens automatically at every launch.
+    static let openWindowAtLaunch = "openWindowAtLaunch"
+    /// Set once the app has completed a first run, so the initial
+    /// orientation window opens exactly once rather than every launch.
+    static let hasCompletedFirstRun = "hasCompletedFirstRun"
+    /// JSON-encoded `[Budget]` — the user's configured usage ceilings.
+    static let budgets = "budgets"
+    /// JSON-encoded `BudgetAlertLedger` — which thresholds already notified.
+    static let budgetAlertLedger = "budgetAlertLedger"
 }
 
 /// When Token Meter appears in the Dock (and ⌘-Tab) like a regular app.
@@ -57,6 +74,77 @@ enum BlockReferenceMode: String, CaseIterable {
     case custom
 }
 
+/// Resolves a block-progress reference from the stored settings.
+///
+/// A pure function rather than a computed property on `AppModel`, because the
+/// inputs live in `UserDefaults` and every reader observes them via
+/// `@AppStorage` for reactivity — the popover, the status item and Settings all
+/// pass their own bindings in and get the same answer.
+enum BlockReference {
+    /// The comparison value, or `nil` when there's nothing meaningful to
+    /// compare against (mode off, or no history/number yet).
+    static func tokens(mode: BlockReferenceMode, custom: Int, peak: Int) -> Int? {
+        switch mode {
+        case .off: nil
+        case .peak: peak > 0 ? peak : nil
+        case .custom: custom > 0 ? custom : nil
+        }
+    }
+
+    /// Human phrase naming what the bar compares against.
+    static func label(for mode: BlockReferenceMode) -> String {
+        switch mode {
+        case .off: ""
+        case .peak: "your highest past block"
+        case .custom: "your custom reference"
+        }
+    }
+
+    /// Progress as a 0...1 fraction, clamped so an over-reference block shows a
+    /// full bar rather than overflowing.
+    static func fraction(tokens: Int, reference: Int) -> Double {
+        guard reference > 0 else { return 0 }
+        return min(1, Double(tokens) / Double(reference))
+    }
+}
+
+/// What the menu-bar status item displays next to the gauge glyph.
+///
+/// A menu-bar meter that shows nothing but an icon is a launcher, not a meter —
+/// this is the whole point of the app being in the menu bar.
+enum MenuBarMetric: String, CaseIterable, Identifiable {
+    /// Just the glyph — for people who want the app quiet.
+    case iconOnly
+    case todayTokens
+    case todayCost
+    /// How far through the current 5-hour block, against the chosen reference.
+    case blockProgress
+    /// This billing period's value multiple (needs a plan in Settings).
+    case planMultiple
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .iconOnly: "Icon only"
+        case .todayTokens: "Today's tokens"
+        case .todayCost: "Today's estimated cost"
+        case .blockProgress: "5-hour block progress"
+        case .planMultiple: "Plan value multiple"
+        }
+    }
+
+    /// Why the metric might show a dash, so Settings can say so up front.
+    var requirement: String? {
+        switch self {
+        case .iconOnly, .todayTokens: nil
+        case .todayCost: "Needs priced models — see Pricing."
+        case .blockProgress: "Needs a reference — see Usage Windows."
+        case .planMultiple: "Needs a plan — see Plan."
+        }
+    }
+}
+
 /// Where the app pulls live model prices from. All three resolve to the same
 /// bundled/override layering; this only picks the *remote* base.
 enum PricingSource: String, CaseIterable {
@@ -77,33 +165,137 @@ enum PricingSource: String, CaseIterable {
     }
 }
 
-/// The tabbed settings content, reused by both the ⌘, Settings scene and the
-/// main window's Settings pane — so preferences live in one place.
-struct SettingsTabs: View {
-    var body: some View {
-        TabView {
-            GeneralSettingsTab()
-                .tabItem { Label("General", systemImage: "gearshape") }
-            DataSourcesSettingsTab()
-                .tabItem { Label("Data Sources", systemImage: "folder") }
-            UsageWindowsSettingsTab()
-                .tabItem { Label("Usage Windows", systemImage: "hourglass") }
-            PricingSettingsTab()
-                .tabItem { Label("Pricing", systemImage: "dollarsign.circle") }
-            PermissionsSettingsTab()
-                .tabItem { Label("Permissions", systemImage: "lock.shield") }
+/// One page of preferences.
+///
+/// Ordered by how often people need them, not alphabetically: the things you
+/// set up once and revisit (plan, budgets) sit near the top, plumbing near the
+/// bottom.
+enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
+    case general
+    case plan
+    case budgets
+    case dataSources
+    case usageWindows
+    case pricing
+    case permissions
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .general: "General"
+        case .plan: "Plan"
+        case .budgets: "Budgets"
+        case .dataSources: "Data Sources"
+        case .usageWindows: "Usage Windows"
+        case .pricing: "Pricing"
+        case .permissions: "Permissions"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general: "gearshape"
+        case .plan: "creditcard"
+        case .budgets: "bell.badge"
+        case .dataSources: "folder"
+        case .usageWindows: "hourglass"
+        case .pricing: "dollarsign.circle"
+        case .permissions: "lock.shield"
+        }
+    }
+
+    /// One line of orientation under the page title, so a section's purpose is
+    /// readable without opening it and guessing.
+    var summary: String {
+        switch self {
+        case .general: "Menu bar readout, launch behavior, Dock icon, floating widget."
+        case .plan: "What you pay, so usage can be shown as value rather than a bill."
+        case .budgets: "Usage ceilings and the notifications that warn you."
+        case .dataSources: "Where Claude Code, Codex and Ollama usage is read from."
+        case .usageWindows: "What the 5-hour block progress compares against."
+        case .pricing: "Where per-model prices come from, and per-model overrides."
+        case .permissions: "Full Disk Access, needed to read the CLI logs."
         }
     }
 }
 
-/// The ⌘, Settings scene wrapper — fixed width + Dock-policy window tracking.
+/// The settings content, reused by both the ⌘, Settings scene and the main
+/// window's Settings pane — so preferences live in one place.
+///
+/// A sidebar rather than a tab strip: at seven pages the icon-only toolbar was
+/// cramped and unlabeled, so finding anything meant clicking through every icon
+/// to see what it was. A list shows all seven names at once, matches the main
+/// window's own navigation, and has room to say what each page is for.
+struct SettingsNavigator: View {
+    @State private var selection: SettingsSection = .general
+
+    var body: some View {
+        NavigationSplitView {
+            List(SettingsSection.allCases, selection: $selection) { section in
+                Label(section.label, systemImage: section.systemImage)
+                    .tag(section)
+            }
+            .navigationSplitViewColumnWidth(min: 168, ideal: 184, max: 220)
+        } detail: {
+            SettingsPageView(section: selection)
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+}
+
+/// A single settings page, headed by its name and purpose.
+///
+/// Shared by the ⌘, window (which supplies its own sidebar) and the main
+/// window (whose sidebar already lists every page), so the two can never drift
+/// apart.
+struct SettingsPageView: View {
+    let section: SettingsSection
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(section.label)
+                        .font(.title2.weight(.semibold))
+                    Text(section.summary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+
+                page
+            }
+        }
+        .frame(minWidth: 440)
+    }
+
+    @ViewBuilder
+    private var page: some View {
+        switch section {
+        case .general: GeneralSettingsTab()
+        case .plan: PlanSettingsTab()
+        case .budgets: BudgetsSettingsTab()
+        case .dataSources: DataSourcesSettingsTab()
+        case .usageWindows: UsageWindowsSettingsTab()
+        case .pricing: PricingSettingsTab()
+        case .permissions: PermissionsSettingsTab()
+        }
+    }
+}
+
+/// The ⌘, Settings scene wrapper — sized for the sidebar + Dock-policy window
+/// tracking. Resizable rather than fixed: the sidebar needs room, and pages
+/// like Pricing hold a long scrolling list.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        SettingsTabs()
-            .frame(width: 500)
-            .fixedSize(horizontal: false, vertical: true)
+        SettingsNavigator()
+            .frame(minWidth: 660, idealWidth: 720, minHeight: 460, idealHeight: 560)
             .onAppear { model.windowAppeared() }
             .onDisappear { model.windowDisappeared() }
     }
@@ -120,8 +312,75 @@ struct GeneralSettingsTab: View {
     @AppStorage(PreferenceKey.floatingHUDEnabled)
     private var floatingHUDEnabled = false
 
+    @AppStorage(PreferenceKey.menuBarMetric)
+    private var menuBarMetricRaw = MenuBarMetric.todayTokens.rawValue
+
+    @AppStorage(PreferenceKey.openWindowAtLaunch)
+    private var openWindowAtLaunch = false
+
+    /// Mirrors the real `SMAppService` state, refreshed on appear because the
+    /// user can change it in System Settings while we're open.
+    @State private var launchAtLogin = false
+
+    private var menuBarMetric: MenuBarMetric {
+        MenuBarMetric(rawValue: menuBarMetricRaw) ?? .todayTokens
+    }
+
     var body: some View {
         Form {
+            Section {
+                Picker("Menu bar shows", selection: $menuBarMetricRaw) {
+                    ForEach(MenuBarMetric.allCases) { option in
+                        Text(option.label).tag(option.rawValue)
+                    }
+                }
+            } header: {
+                Text("Menu bar")
+            } footer: {
+                Text(menuBarFooter)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section {
+                Toggle("Start Token Meter at login", isOn: Binding(
+                    get: { launchAtLogin },
+                    set: { newValue in
+                        model.setLaunchAtLogin(newValue)
+                        launchAtLogin = model.launchesAtLogin
+                    }
+                ))
+                if model.launchAtLoginNeedsApproval {
+                    HStack(spacing: 8) {
+                        Label("Waiting for approval in System Settings", systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Button("Open Login Items") { LaunchAtLogin.openSystemSettings() }
+                            .controlSize(.small)
+                    }
+                }
+                Toggle("Open the main window at launch", isOn: $openWindowAtLaunch)
+            } header: {
+                Text("At launch")
+            } footer: {
+                Text("Token Meter only records usage while it's running, so starting at login is what keeps history complete. The window stays closed by default so it starts quietly in the menu bar — it always opens on your first run, and whenever you click the Dock icon or \"Open Token Meter\".")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section {
+                updateRow
+            } header: {
+                Text("Updates")
+            } footer: {
+                Text("Checks the project's GitHub releases for a newer version and links to it. Nothing is downloaded or installed automatically, and nothing about your usage is sent.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section {
                 Picker("Show in Dock", selection: $dockIconModeRaw) {
                     Text("While a window is open").tag(DockIconMode.whileWindowsOpen.rawValue)
@@ -155,6 +414,385 @@ struct GeneralSettingsTab: View {
         }
         .formStyle(.grouped)
         .padding(.bottom, 8)
+        .onAppear {
+            launchAtLogin = model.launchesAtLogin
+            if case .unknown = model.updateStatus {
+                Task { await model.checkForUpdates() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var updateRow: some View {
+        switch model.updateStatus {
+        case .checking:
+            LabeledContent("Version") {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking…").foregroundStyle(.secondary)
+                }
+            }
+        case .updateAvailable(let current, let latest, let url):
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Version \(latest) is available", systemImage: "arrow.down.circle.fill")
+                    .foregroundStyle(.green)
+                Text("You're running \(current).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Link("View release", destination: url)
+                    .controlSize(.small)
+            }
+        case .upToDate(let current):
+            LabeledContent("Version") {
+                HStack(spacing: 6) {
+                    Text(current).monospacedDigit()
+                    Text("· up to date").foregroundStyle(.secondary)
+                }
+            }
+        case .failed:
+            LabeledContent("Version") {
+                HStack(spacing: 8) {
+                    Text("Couldn't check").foregroundStyle(.secondary)
+                    Button("Retry") { Task { await model.checkForUpdates() } }
+                        .controlSize(.small)
+                }
+            }
+        case .unknown:
+            LabeledContent("Version") {
+                Button("Check for Updates") {
+                    Task { await model.checkForUpdates() }
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private var menuBarFooter: String {
+        let base = "The status item shows this beside the gauge. Log-derived numbers are estimates, and the readout hides itself rather than showing a placeholder when there's nothing to report yet."
+        guard let requirement = menuBarMetric.requirement else { return base }
+        return "\(base) \(requirement)"
+    }
+}
+
+// MARK: - Plan
+
+/// Lets the user say what they actually pay, which is the only way the app can
+/// tell them what a big estimated-cost number means. Without it, "$2,530" reads
+/// like a bill; with it, it reads like leverage.
+struct PlanSettingsTab: View {
+    @Environment(AppModel.self) private var model
+
+    @AppStorage(PreferenceKey.subscriptionPlan)
+    private var planRaw = SubscriptionPlan.unset.rawValue
+
+    /// Local edit buffer so the field doesn't fight the user mid-typing.
+    @State private var priceText = ""
+    @State private var cycleDay = 1
+
+    private var plan: SubscriptionPlan {
+        SubscriptionPlan(rawValue: planRaw) ?? .unset
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Plan", selection: $planRaw) {
+                    ForEach(SubscriptionPlan.allCases) { option in
+                        Text(option.label).tag(option.rawValue)
+                    }
+                }
+                .onChange(of: planRaw) {
+                    model.setSubscriptionPlan(plan)
+                    priceText = formattedPrice
+                }
+
+                if plan.showsValueComparison {
+                    LabeledContent("Monthly price") {
+                        HStack(spacing: 4) {
+                            Text(verbatim: "$")
+                                .foregroundStyle(.secondary)
+                            TextField("0", text: $priceText)
+                                .frame(width: 80)
+                                .multilineTextAlignment(.trailing)
+                                .onSubmit(commitPrice)
+                            Button("Set", action: commitPrice)
+                                .controlSize(.small)
+                        }
+                    }
+
+                    Picker("Renews on day", selection: $cycleDay) {
+                        ForEach(Array(BillingPeriod.dayRange), id: \.self) { day in
+                            Text(day.formatted()).tag(day)
+                        }
+                    }
+                    .onChange(of: cycleDay) { model.setPlanCycleStartDay(cycleDay) }
+                }
+            } header: {
+                Text("What you pay")
+            } footer: {
+                Text(footerText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if plan.showsValueComparison {
+                Section {
+                    PlanValueSummary(value: model.planValue)
+                } header: {
+                    Text("This billing period")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(.bottom, 8)
+        .onAppear {
+            priceText = formattedPrice
+            cycleDay = model.planCycleStartDay
+        }
+    }
+
+    private var formattedPrice: String {
+        let price = model.planMonthlyPriceUSD
+        return price > 0 ? NSDecimalNumber(decimal: price).stringValue : ""
+    }
+
+    private func commitPrice() {
+        // Accept "20", "20.00", "$20" — reject anything else without clobbering
+        // the stored value.
+        let cleaned = priceText
+            .trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "$", with: "")
+            .replacingOccurrences(of: ",", with: "")
+        guard let value = Decimal(string: cleaned), value >= 0 else {
+            priceText = formattedPrice
+            return
+        }
+        model.setPlanMonthlyPrice(value)
+        priceText = formattedPrice
+    }
+
+    private var footerText: String {
+        switch plan {
+        case .unset:
+            "Tell Token Meter what you pay and it can show what your usage would have cost on pay-as-you-go API pricing — the number that makes a subscription look like a bargain or a waste. Nothing is sent anywhere."
+        case .payAsYouGo:
+            "On metered API billing the estimate already approximates your invoice, so there's no plan fee to compare against. It's still an estimate, not a bill."
+        default:
+            "Prices are the vendor list price at the time this build shipped — edit if yours differs. \"Renews on day\" anchors the period to your actual billing date rather than the 1st."
+        }
+    }
+}
+
+/// The value readout, shared by Settings and the Overview pane.
+struct PlanValueSummary: View {
+    let value: PlanValue
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LabeledContent("Observed usage") {
+                Text(value.observedCostUSD, format: .currency(code: "USD"))
+                    .font(.system(.body, design: .rounded, weight: .medium))
+                    .monospacedDigit()
+            }
+            LabeledContent("You pay") {
+                Text(value.monthlyPriceUSD, format: .currency(code: "USD"))
+                    .monospacedDigit()
+            }
+            if let multiple = value.valueMultiple {
+                LabeledContent("Value multiple") {
+                    Text(PlanValueFormat.multiple(multiple))
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(value.hasBrokenEven ? .green : .secondary)
+                        .monospacedDigit()
+                }
+            }
+            Text(PlanValueFormat.caveat(for: value))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// Shared copy + number formatting for the plan comparison, so the menu bar,
+/// Overview and Settings can't drift apart on the honesty wording.
+enum PlanValueFormat {
+    /// "126×" — no decimals once it's large, one below 10 so early days in a
+    /// period don't collapse to a flat "0×".
+    ///
+    /// Locale-aware by default (a German user should read "2,5×"); the
+    /// parameter exists so tests can pin a locale instead of depending on
+    /// whatever the machine is set to.
+    static func multiple(_ value: Decimal, locale: Locale = .autoupdatingCurrent) -> String {
+        let number = NSDecimalNumber(decimal: value).doubleValue
+        let digits = number < 10 ? 1 : 0
+        let formatted = number.formatted(
+            .number.precision(.fractionLength(digits)).locale(locale)
+        )
+        return formatted + "×"
+    }
+
+    static func periodLabel(_ value: PlanValue) -> String {
+        let start = value.period.start.formatted(.dateTime.month(.abbreviated).day())
+        let end = value.period.end.addingTimeInterval(-1)
+            .formatted(.dateTime.month(.abbreviated).day())
+        return "\(start) – \(end)"
+    }
+
+    /// The honesty line. Every claim here has to stay defensible: the figure is
+    /// a floor built from local logs, not a bill and not a guarantee.
+    static func caveat(for value: PlanValue) -> String {
+        var parts = [
+            "Estimated API list-price equivalent of usage Token Meter saw this period — not a bill, and not a refund you're owed."
+        ]
+        if value.isPartialPeriod {
+            parts.append("History doesn't reach the start of this period, so the real figure is higher.")
+        }
+        if !value.unpricedModels.isEmpty {
+            let names = value.unpricedModels.sorted().joined(separator: ", ")
+            parts.append("Excludes unpriced models (\(names)).")
+        }
+        return parts.joined(separator: " ")
+    }
+}
+
+// MARK: - Budgets
+
+/// Usage ceilings + the notifications that fire when you approach them.
+///
+/// Honesty guardrail: a budget is the **user's own** ceiling. Nothing here may
+/// imply Token Meter knows a vendor quota, because it doesn't.
+struct BudgetsSettingsTab: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Form {
+            Section {
+                permissionRow
+            } header: {
+                Text("Notifications")
+            } footer: {
+                Text("Alerts fire at 50%, 80% and 100% of a budget, at most once per window — a long session won't repeat them. Budgets are compared against usage reconstructed from local logs, so they're estimates, not your plan's real quota.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(BudgetScope.allCases) { scope in
+                BudgetRowView(scope: scope)
+            }
+        }
+        .formStyle(.grouped)
+        .padding(.bottom, 8)
+        .task { await model.refreshNotificationPermission() }
+    }
+
+    @ViewBuilder
+    private var permissionRow: some View {
+        switch model.notificationPermission {
+        case .granted:
+            LabeledContent("Permission") {
+                Label("Allowed", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .labelStyle(.titleAndIcon)
+            }
+        case .denied:
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Notifications are turned off", systemImage: "bell.slash")
+                    .foregroundStyle(.orange)
+                Text("Your usage is still tracked and shown in the app, but no budget alerts can be delivered. Turn Token Meter back on in System Settings → Notifications.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Notification Settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .controlSize(.small)
+            }
+        case .notRequested, .unknown:
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Token Meter needs permission before it can alert you.")
+                    .font(.callout)
+                Button("Enable Notifications") {
+                    Task { await model.requestNotificationPermission() }
+                }
+            }
+        }
+    }
+}
+
+/// One budget row. Kept separate so each scope owns its own edit buffer and
+/// they don't fight each other while typing.
+private struct BudgetRowView: View {
+    @Environment(AppModel.self) private var model
+    let scope: BudgetScope
+
+    @State private var isEnabled = false
+    @State private var limitText = ""
+
+    private var budget: Budget { model.budget(for: scope) }
+
+    var body: some View {
+        Section {
+            Toggle("Alert me about \(scope.label.lowercased())", isOn: $isEnabled)
+                .onChange(of: isEnabled) { commit() }
+
+            if isEnabled && scope != .block {
+                LabeledContent("Budget") {
+                    HStack(spacing: 4) {
+                        Text(verbatim: "$")
+                            .foregroundStyle(.secondary)
+                        TextField("0", text: $limitText)
+                            .frame(width: 80)
+                            .multilineTextAlignment(.trailing)
+                            .onSubmit(commit)
+                        Button("Set", action: commit)
+                            .controlSize(.small)
+                    }
+                }
+            }
+        } header: {
+            Text(scope.label)
+        } footer: {
+            Text(footer)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear {
+            isEnabled = budget.isEnabled
+            limitText = budget.limit > 0
+                ? NSDecimalNumber(decimal: budget.limit).stringValue
+                : ""
+        }
+    }
+
+    private var footer: String {
+        switch scope {
+        case .block:
+            // No separate number: reusing the existing reference avoids two
+            // settings that mean the same thing and can disagree.
+            "Measured in tokens against the reference you picked in Usage Windows. With that set to \"Nothing\", there's no ceiling to compare against and this stays quiet."
+        case .daily:
+            "Estimated cost of today's usage."
+        case .weekly:
+            "Estimated cost across the calendar week."
+        case .billingPeriod:
+            "Estimated cost across your plan's billing period — set the renewal day under Plan."
+        }
+    }
+
+    private func commit() {
+        let cleaned = limitText
+            .trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "$", with: "")
+            .replacingOccurrences(of: ",", with: "")
+        let limit = Decimal(string: cleaned) ?? 0
+        model.setBudget(Budget(scope: scope, isEnabled: isEnabled, limit: max(0, limit)))
+        limitText = limit > 0 ? NSDecimalNumber(decimal: limit).stringValue : ""
     }
 }
 

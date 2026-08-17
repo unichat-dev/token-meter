@@ -14,17 +14,21 @@ struct ClaudeCodeLogSource: UsageEventSource {
 
     private let core: JSONLLogWatchSource
 
+    /// - Parameter stateStore: persists read offsets between launches. Defaults
+    ///   to the on-disk store; tests pass `nil` to stay hermetic.
     init(
         locator: ClaudeCodeLogLocator,
         watcher: any DirectoryWatching = FSEventsWatcher(),
-        rootPollInterval: Duration = .seconds(10)
+        rootPollInterval: Duration = .seconds(10),
+        stateStore: ScanStateStore? = ScanStateStore(provider: .claudeCode)
     ) {
         core = JSONLLogWatchSource(
             provider: .claudeCode,
             locator: locator,
             parser: ClaudeCodeLogParser(),
             watcher: watcher,
-            rootPollInterval: rootPollInterval
+            rootPollInterval: rootPollInterval,
+            stateStore: stateStore
         )
     }
 

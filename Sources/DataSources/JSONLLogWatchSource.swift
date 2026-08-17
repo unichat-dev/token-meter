@@ -61,21 +61,24 @@ actor JSONLLogWatchSource: UsageEventSource {
     private let watcher: any DirectoryWatching
     private let rootPollInterval: Duration
 
-    private struct FileIngestState {
-        var inode: UInt64?
-        var offset: UInt64
-    }
-
-    private var fileStates: [String: FileIngestState] = [:]
+    private var fileStates: [String: ScanState.FileState] = [:]
     private var seenEventIDs: Set<String> = []
     private var skippedLineCount = 0
+
+    /// Where read offsets survive between launches. `nil` disables persistence
+    /// (tests, or an unavailable Application Support directory) and restores
+    /// the old behaviour of re-reading everything each run.
+    private let stateStore: ScanStateStore?
+    /// Set when `fileStates` moved on since the last save.
+    private var stateDirty = false
 
     init(
         provider: UsageProvider,
         locator: any JSONLLogLocating,
         parser: any UsageLineParsing,
         watcher: any DirectoryWatching = FSEventsWatcher(),
-        rootPollInterval: Duration = .seconds(10)
+        rootPollInterval: Duration = .seconds(10),
+        stateStore: ScanStateStore? = nil
     ) {
         self.provider = provider
         self.locator = locator
@@ -83,6 +86,7 @@ actor JSONLLogWatchSource: UsageEventSource {
         self.parser = parser
         self.watcher = watcher
         self.rootPollInterval = rootPollInterval
+        self.stateStore = stateStore
     }
 
     nonisolated func events() -> AsyncThrowingStream<UsageEvent, Error> {
@@ -106,13 +110,28 @@ actor JSONLLogWatchSource: UsageEventSource {
             }
         }
 
-        scanAll(into: continuation) // backfill
+        // Resume where the last run stopped. A stale generation, a rotated
+        // file, or a missing state file all degrade to a full re-read.
+        if let stateStore {
+            fileStates = stateStore.load().files
+        }
+
+        scanAll(into: continuation) // backfill (only what's new)
+        persistStateIfNeeded()
 
         for await _ in watcher.changes(in: root) {
             if Task.isCancelled { break }
             scanAll(into: continuation)
+            persistStateIfNeeded()
         }
+        persistStateIfNeeded()
         continuation.finish()
+    }
+
+    private func persistStateIfNeeded() {
+        guard stateDirty, let stateStore else { return }
+        stateDirty = false
+        stateStore.save(ScanState(files: fileStates))
     }
 
     /// One pass over every log file, reading only bytes appended since the
@@ -137,7 +156,10 @@ actor JSONLLogWatchSource: UsageEventSource {
                 // pass; the next change tick retries.
                 continue
             }
-            fileStates[key] = FileIngestState(inode: inode, offset: result.newOffset)
+            if fileStates[key]?.offset != result.newOffset || fileStates[key]?.inode != inode {
+                fileStates[key] = ScanState.FileState(inode: inode, offset: result.newOffset)
+                stateDirty = true
+            }
 
             for line in result.lines {
                 guard let event = parser.event(from: line) else {

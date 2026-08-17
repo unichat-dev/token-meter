@@ -53,6 +53,29 @@ def per_mtok(cost_per_token):
     return round(cost_per_token * 1_000_000, 6)
 
 
+# Upstream prices web search per query, keyed by context size. The CLI logs
+# report only a request count with no size, so we take the medium tier as the
+# representative rate (for Anthropic all three sizes are identical anyway).
+_SEARCH_SIZE_PREFERENCE = (
+    "search_context_size_medium",
+    "search_context_size_low",
+    "search_context_size_high",
+)
+
+
+def web_search_cost(raw):
+    """USD for a single server-side web-search request."""
+    if isinstance(raw, (int, float)):
+        return round(float(raw), 6)
+    if not isinstance(raw, dict):
+        return None
+    for key in _SEARCH_SIZE_PREFERENCE:
+        value = raw.get(key)
+        if isinstance(value, (int, float)):
+            return round(float(value), 6)
+    return None
+
+
 def build_models(upstream):
     models = {}
     for key, info in upstream.items():
@@ -70,10 +93,19 @@ def build_models(upstream):
         entry = {"inputPerMTok": input_cost, "outputPerMTok": output_cost}
         cache_read = per_mtok(info.get("cache_read_input_token_cost"))
         cache_write = per_mtok(info.get("cache_creation_input_token_cost"))
+        # A 1-hour cache entry is billed higher than the default 5-minute one
+        # (2x base input vs 1.25x for Anthropic), and the CLI logs report the
+        # split, so the feed has to carry both rates.
+        cache_write_1h = per_mtok(info.get("cache_creation_input_token_cost_above_1hr"))
+        search = web_search_cost(info.get("search_context_cost_per_query"))
         if cache_read is not None:
             entry["cacheReadPerMTok"] = cache_read
         if cache_write is not None:
             entry["cacheWritePerMTok"] = cache_write
+        if cache_write_1h is not None:
+            entry["cacheWrite1hPerMTok"] = cache_write_1h
+        if search is not None:
+            entry["webSearchPerRequest"] = search
         models[key] = entry
     return dict(sorted(models.items()))
 

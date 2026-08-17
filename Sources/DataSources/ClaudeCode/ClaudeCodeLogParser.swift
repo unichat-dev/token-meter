@@ -34,6 +34,35 @@ struct ClaudeCodeLogParser: UsageLineParsing {
         // Synthetic placeholder messages carry no real usage.
         guard model != "<synthetic>" else { return nil }
 
+        // Built stepwise rather than inline: the optional-chaining chains below
+        // are cheap to read but expensive for the type checker in one literal.
+        let breakdown = usage.cacheCreation
+        let cacheCreationTotal: Int = usage.cacheCreationInputTokens ?? breakdown?.total ?? 0
+
+        var tokens = TokenCounts()
+        tokens.input = usage.inputTokens ?? 0
+        tokens.output = usage.outputTokens ?? 0
+        tokens.cacheRead = usage.cacheReadInputTokens ?? 0
+        // The flat field stays the total. When the nested breakdown is absent
+        // (older logs) both TTL tiers stay zero and the whole amount bills at
+        // the base write rate, exactly as before.
+        tokens.cacheCreation = cacheCreationTotal
+        tokens.cacheCreation5m = breakdown?.ephemeral5mInputTokens ?? 0
+        tokens.cacheCreation1h = breakdown?.ephemeral1hInputTokens ?? 0
+
+        var serverTools = ServerToolUse()
+        serverTools.webSearchRequests = usage.serverToolUse?.webSearchRequests ?? 0
+        serverTools.webFetchRequests = usage.serverToolUse?.webFetchRequests ?? 0
+
+        var attribution = UsageAttribution()
+        attribution.sessionID = Self.normalized(raw.sessionId)
+        attribution.gitBranch = Self.normalized(raw.gitBranch)
+        // `attributionAgent` names the subagent type; `agentId` is only an
+        // opaque instance id, so it's not a useful grouping key on its own.
+        attribution.agent = Self.normalized(raw.attributionAgent)
+        attribution.skill = Self.normalized(raw.attributionSkill)
+        attribution.isSidechain = raw.isSidechain ?? false
+
         return UsageEvent(
             id: id,
             provider: .claudeCode,
@@ -41,13 +70,19 @@ struct ClaudeCodeLogParser: UsageLineParsing {
             timestamp: timestamp,
             model: model,
             project: raw.cwd,
-            tokens: TokenCounts(
-                input: usage.inputTokens ?? 0,
-                output: usage.outputTokens ?? 0,
-                cacheRead: usage.cacheReadInputTokens ?? 0,
-                cacheCreation: usage.cacheCreationInputTokens ?? 0
-            )
+            tokens: tokens,
+            serverToolUse: serverTools,
+            attribution: attribution
         )
+    }
+
+    /// Treats empty/whitespace strings as absent, so blank fields don't become
+    /// a real-looking "" grouping key in the breakdowns.
+    private static func normalized(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else { return nil }
+        return trimmed
     }
 
     /// Streaming can log the same message id across several lines (one per
@@ -83,6 +118,13 @@ private struct RawLogLine: Decodable {
     var uuid: String?
     var requestId: String?
     var message: RawMessage?
+
+    // Attribution context — present on Claude Code lines, absent elsewhere.
+    var sessionId: String?
+    var gitBranch: String?
+    var attributionAgent: String?
+    var attributionSkill: String?
+    var isSidechain: Bool?
 }
 
 private struct RawMessage: Decodable {
@@ -96,11 +138,43 @@ private struct RawUsage: Decodable {
     var outputTokens: Int?
     var cacheReadInputTokens: Int?
     var cacheCreationInputTokens: Int?
+    var cacheCreation: RawCacheCreation?
+    var serverToolUse: RawServerToolUse?
 
     enum CodingKeys: String, CodingKey {
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
         case cacheReadInputTokens = "cache_read_input_tokens"
         case cacheCreationInputTokens = "cache_creation_input_tokens"
+        case cacheCreation = "cache_creation"
+        case serverToolUse = "server_tool_use"
+    }
+}
+
+/// Cache writes split by entry TTL — the 1-hour tier is billed higher than the
+/// 5-minute one, so the split is a price input, not a detail.
+private struct RawCacheCreation: Decodable {
+    var ephemeral5mInputTokens: Int?
+    var ephemeral1hInputTokens: Int?
+
+    /// Fallback total for logs that carry the breakdown but not the flat field.
+    var total: Int {
+        (ephemeral5mInputTokens ?? 0) + (ephemeral1hInputTokens ?? 0)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case ephemeral5mInputTokens = "ephemeral_5m_input_tokens"
+        case ephemeral1hInputTokens = "ephemeral_1h_input_tokens"
+    }
+}
+
+/// Provider-side tool calls billed per request rather than per token.
+private struct RawServerToolUse: Decodable {
+    var webSearchRequests: Int?
+    var webFetchRequests: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case webSearchRequests = "web_search_requests"
+        case webFetchRequests = "web_fetch_requests"
     }
 }

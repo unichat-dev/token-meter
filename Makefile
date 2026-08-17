@@ -26,9 +26,18 @@ test: generate
 	xcodebuild -scheme TokenMeter -destination 'platform=macOS' test
 
 # Build a signed, notarized Developer ID DMG for direct download.
-# Requires a Developer ID cert + a stored notarytool profile (see docs/RELEASE.md).
+# Maintainer-only: the signing script and runbook are not part of the public
+# repo, because they describe this project's specific Apple credentials. Build
+# from source with `make build` instead — that needs no certificate.
 release:
-	./scripts/build-release.sh
+	@if [ -x ./scripts/build-release.sh ]; then \
+		./scripts/build-release.sh; \
+	else \
+		echo "make release is maintainer-only — the signing script isn't in the public repo."; \
+		echo "Use 'make build' to build from source, or download a notarized DMG from:"; \
+		echo "  https://github.com/unichat-dev/token-meter/releases"; \
+		exit 1; \
+	fi
 
 clean:
 	rm -rf TokenMeter.xcodeproj build dist

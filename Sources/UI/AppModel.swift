@@ -28,6 +28,16 @@ final class AppModel {
     private(set) var logAccessStatus: LogAccessStatus = .checking
     private(set) var ingestedEventCount = 0
 
+    /// This billing period's observed usage against what the user pays for it.
+    /// `.none` until a plan is declared in Settings.
+    private(set) var planValue: PlanValue = .none
+
+    /// What prompt caching is doing to this billing period's cost.
+    private(set) var cacheEfficiency = CacheEfficiency(
+        cacheReadTokens: 0, cacheWriteTokens: 0, freshInputTokens: 0,
+        actualCostUSD: 0, withoutCacheCostUSD: 0
+    )
+
     /// Which pane the main window shows. Bound by ``MainWindowView`` and set by
     /// the menu-bar popover so "Open TokenMeter" / "Settings" land on the right
     /// section.
@@ -45,9 +55,30 @@ final class AppModel {
     private(set) var codexLogsRoot: URL = CodexLogLocator.defaultRoot
 
     private var events: [UsageEvent] = []
-    /// In-memory dedupe across DB load + log re-backfill after relaunch
-    /// (the DB's unique constraint is the durable layer of the same rule).
-    private var seenEventIDs: Set<String> = []
+    /// Event id → its slot in `events`, for dedupe across the DB load and the
+    /// log re-backfill after relaunch (the DB's unique constraint is the
+    /// durable layer of the same rule).
+    ///
+    /// A map rather than a `Set` so a re-scanned event can **refresh** the row
+    /// it matches instead of being dropped. That's what lets a parser or
+    /// pricing change reach history that was ingested by an older build —
+    /// dropping the re-scan would freeze old rows at the old numbers forever.
+    /// `events` is only ever appended to, so stored indices stay valid.
+    private var eventIndex: [String: Int] = [:]
+
+    /// Oldest event timestamp seen. Tracked incrementally because log backfill
+    /// yields in file order, not time order — so `events.first` is not the
+    /// earliest. Used to tell whether history actually covers a billing period.
+    private var earliestEventAt: Date?
+
+    /// Running day × model totals. Every rollup except the 5-hour block reads
+    /// this instead of rescanning `events`.
+    private var usageIndex = UsageIndex()
+
+    /// Reconstructed blocks, rebuilt only when events changed rather than on
+    /// every throttled refresh.
+    private var cachedActiveBlocks: [UsageBlock] = []
+    private var blocksDirty = true
     private var ingestTask: Task<Void, Never>?
     private var codexIngestTask: Task<Void, Never>?
     private var maintenanceTask: Task<Void, Never>?
@@ -97,6 +128,159 @@ final class AppModel {
     var ollamaProxyPort: UInt16 {
         let raw = UserDefaults.standard.integer(forKey: PreferenceKey.ollamaProxyPort)
         return raw > 0 && raw <= 65_535 ? UInt16(raw) : 11_435
+    }
+
+    // MARK: Plan
+
+    /// The plan the user says they're on (Settings → Plan).
+    var subscriptionPlan: SubscriptionPlan {
+        let raw = UserDefaults.standard.string(forKey: PreferenceKey.subscriptionPlan) ?? ""
+        return SubscriptionPlan(rawValue: raw) ?? .unset
+    }
+
+    /// What that plan costs per month. Falls back to the preset list price so a
+    /// freshly-picked plan is useful before the user touches the field.
+    var planMonthlyPriceUSD: Decimal {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: PreferenceKey.planMonthlyPriceUSD) != nil {
+            let stored = defaults.double(forKey: PreferenceKey.planMonthlyPriceUSD)
+            if stored > 0 { return Decimal(stored) }
+        }
+        return subscriptionPlan.defaultMonthlyPriceUSD ?? 0
+    }
+
+    /// Day of the month the subscription renews (1...28).
+    var planCycleStartDay: Int {
+        let stored = UserDefaults.standard.integer(forKey: PreferenceKey.planCycleStartDay)
+        return BillingPeriod.dayRange.contains(stored) ? stored : 1
+    }
+
+    func setSubscriptionPlan(_ plan: SubscriptionPlan) {
+        let defaults = UserDefaults.standard
+        defaults.set(plan.rawValue, forKey: PreferenceKey.subscriptionPlan)
+        // Switching plans adopts the new list price; the user can still edit it.
+        // Custom keeps whatever they typed.
+        if plan != .custom, let preset = plan.defaultMonthlyPriceUSD {
+            defaults.set(NSDecimalNumber(decimal: preset).doubleValue,
+                         forKey: PreferenceKey.planMonthlyPriceUSD)
+        }
+        recomputeRollups()
+    }
+
+    func setPlanMonthlyPrice(_ price: Decimal) {
+        UserDefaults.standard.set(
+            NSDecimalNumber(decimal: max(0, price)).doubleValue,
+            forKey: PreferenceKey.planMonthlyPriceUSD
+        )
+        recomputeRollups()
+    }
+
+    func setPlanCycleStartDay(_ day: Int) {
+        let clamped = min(max(day, BillingPeriod.dayRange.lowerBound), BillingPeriod.dayRange.upperBound)
+        UserDefaults.standard.set(clamped, forKey: PreferenceKey.planCycleStartDay)
+        recomputeRollups()
+    }
+
+    // MARK: Budgets & notifications
+
+    /// Whether we're allowed to post budget alerts.
+    private(set) var notificationPermission: NotificationPermission = .unknown
+
+    /// Posts the alerts. Injectable so tests never reach the real
+    /// notification framework.
+    @ObservationIgnored
+    var notifier: any BudgetNotifying = UserNotificationService()
+
+    /// Thresholds already fired, per window instance. Persisted so relaunching
+    /// mid-day doesn't replay alerts the user already saw.
+    @ObservationIgnored
+    private var alertLedger = BudgetAlertLedger()
+
+    /// The user's configured budgets, keyed by scope.
+    private(set) var budgets: [BudgetScope: Budget] = [:]
+
+    func budget(for scope: BudgetScope) -> Budget {
+        budgets[scope] ?? Budget(scope: scope)
+    }
+
+    func setBudget(_ budget: Budget) {
+        budgets[budget.scope] = budget
+        persistBudgets()
+        // A changed ceiling makes past firings meaningless — a budget raised
+        // after hitting 100% should be able to alert again.
+        alertLedger = BudgetAlertLedger()
+        persistLedger()
+        recomputeRollups()
+    }
+
+    /// Any budget switched on. Drives whether we bother asking for permission.
+    var hasEnabledBudget: Bool {
+        budgets.values.contains { $0.isEnabled }
+    }
+
+    func refreshNotificationPermission() async {
+        notificationPermission = await notifier.currentPermission()
+    }
+
+    func requestNotificationPermission() async {
+        notificationPermission = await notifier.requestPermission()
+    }
+
+    private func loadBudgets() {
+        guard
+            let data = UserDefaults.standard.data(forKey: PreferenceKey.budgets),
+            let stored = try? JSONDecoder().decode([Budget].self, from: data)
+        else { return }
+        budgets = Dictionary(uniqueKeysWithValues: stored.map { ($0.scope, $0) })
+    }
+
+    private func persistBudgets() {
+        guard let data = try? JSONEncoder().encode(Array(budgets.values)) else { return }
+        UserDefaults.standard.set(data, forKey: PreferenceKey.budgets)
+    }
+
+    private func loadLedger() {
+        guard
+            let data = UserDefaults.standard.data(forKey: PreferenceKey.budgetAlertLedger),
+            let stored = try? JSONDecoder().decode(BudgetAlertLedger.self, from: data)
+        else { return }
+        alertLedger = stored
+    }
+
+    private func persistLedger() {
+        guard let data = try? JSONEncoder().encode(alertLedger) else { return }
+        UserDefaults.standard.set(data, forKey: PreferenceKey.budgetAlertLedger)
+    }
+
+    // MARK: Launch at login
+
+    /// Read back from `SMAppService` rather than stored, because the user can
+    /// change it in System Settings behind our back.
+    var launchesAtLogin: Bool { LaunchAtLogin.isEnabled }
+    var launchAtLoginNeedsApproval: Bool { LaunchAtLogin.isBlockedBySystemSettings }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        LaunchAtLogin.setEnabled(enabled)
+    }
+
+    // MARK: Updates
+
+    private(set) var updateStatus: UpdateStatus = .unknown
+
+    func checkForUpdates() async {
+        updateStatus = .checking
+        updateStatus = await UpdateChecker().check()
+    }
+
+    // MARK: Export
+
+    /// Serializes events in `interval` for the user to save.
+    func exportData(in interval: DateInterval, format: UsageExport.Format) throws -> Data {
+        try UsageExport.data(
+            for: events(in: interval),
+            format: format,
+            resolver: pricingResolver
+        )
     }
 
     // MARK: Dock icon
@@ -164,10 +348,14 @@ final class AppModel {
         refreshAccessStatus()
 
         let source = ClaudeCodeLogSource(locator: locator)
+        loadBudgets()
+        loadLedger()
+
         ingestTask = Task { [weak self] in
             // 1. Pricing first (cheap, local), then the store — the UI shows
             //    priced history before any log re-scan finishes.
             await self?.startPricing()
+            await self?.refreshNotificationPermission()
             await self?.loadPersistedHistory()
 
             // 2. Then follow the logs. The stream re-yields everything after
@@ -460,8 +648,17 @@ final class AppModel {
             let store = UsageHistoryStore(modelContainer: container)
             self.store = store
             let persisted = try await store.loadAll()
-            for event in persisted where seenEventIDs.insert(event.id).inserted {
+            let calendar = Calendar.current
+            for event in persisted where eventIndex[event.id] == nil {
+                eventIndex[event.id] = events.count
                 events.append(event)
+                usageIndex.insert(event, calendar: calendar)
+            }
+            blocksDirty = true
+            // `loadAll` returns oldest-first, so the first row dates the history.
+            if let oldest = persisted.first?.timestamp,
+               earliestEventAt.map({ oldest < $0 }) ?? true {
+                earliestEventAt = oldest
             }
             ingestedEventCount = events.count
             recomputeRollups()
@@ -488,10 +685,34 @@ final class AppModel {
     // MARK: - Ingestion
 
     private func ingest(_ event: UsageEvent) {
-        guard seenEventIDs.insert(event.id).inserted else { return }
+        let calendar = Calendar.current
+
+        if let existing = eventIndex[event.id] {
+            // Same event, re-read from the log after a relaunch. Usually
+            // identical and ignorable — but when a newer build extracts more
+            // from the same line (e.g. the cache-write TTL split), this is how
+            // the stored row and the in-memory copy pick the new fields up.
+            let previous = events[existing]
+            guard previous != event else { return }
+            usageIndex.remove(previous, calendar: calendar)
+            usageIndex.insert(event, calendar: calendar)
+            events[existing] = event
+            pendingPersist.append(event) // upserts on eventID
+            blocksDirty = true
+            rollupsDirty = true
+            scheduleRollupRecompute()
+            return
+        }
+
+        eventIndex[event.id] = events.count
         events.append(event)
+        usageIndex.insert(event, calendar: calendar)
+        if earliestEventAt.map({ event.timestamp < $0 }) ?? true {
+            earliestEventAt = event.timestamp
+        }
         ingestedEventCount += 1
         pendingPersist.append(event)
+        blocksDirty = true
         rollupsDirty = true
         scheduleRollupRecompute()
     }
@@ -516,33 +737,149 @@ final class AppModel {
         let calendar = Calendar.current
         let resolver = pricingResolver
 
-        // The popover glance, week row, and 5-hour blocks describe *metered*
-        // usage (Claude Code today). Local models get their own row —
-        // mixing free local tokens into those numbers would be misleading.
-        let metered = events.filter { $0.provider.isMetered }
-
-        var today = UsageSummary.daily(from: metered, on: now, calendar: calendar)
-        let todayMetered = metered.filter { calendar.isDate($0.timestamp, inSameDayAs: now) }
-        today.estimatedCostUSD = CostEngine.totals(for: todayMetered, resolver: resolver).costIfAnyPriced
+        // Every window below reads pre-aggregated day buckets rather than
+        // rescanning history, so this stays flat as the archive grows.
+        let todayAggregate = usageIndex.aggregate(on: now, calendar: calendar)
+        var today = todayAggregate.summary
+        today.estimatedCostUSD = CostEngine.totals(
+            for: todayAggregate, resolver: resolver
+        ).costIfAnyPriced
         todaySummary = today
 
-        weekSummary = UsageRollups.weekly(from: metered, containing: now, calendar: calendar)
-        unpricedModels = CostEngine.totals(for: events, resolver: resolver).unpricedModels
+        var week = UsageSummary.empty
+        if let weekInterval = calendar.dateInterval(of: .weekOfYear, for: now) {
+            let weekAggregate = usageIndex.aggregate(in: weekInterval)
+            week = weekAggregate.summary
+            week.estimatedCostUSD = CostEngine.totals(
+                for: weekAggregate, resolver: resolver
+            ).costIfAnyPriced
+        }
+        weekSummary = week
 
-        ollamaTodayTokens = isOllamaTrackingEnabled
-            ? events
-                .filter { $0.provider == .ollama && calendar.isDate($0.timestamp, inSameDayAs: now) }
-                .reduce(0) { $0 + $1.tokens.total }
-            : 0
+        unpricedModels = CostEngine.totals(
+            for: usageIndex.aggregateAll(), resolver: resolver
+        ).unpricedModels
 
-        // The 5-hour block is a Claude Pro/Max subscription concept — scope it
-        // to Claude Code so Codex/GPT usage never inflates the Claude window.
-        let claudeOnly = metered.filter { $0.provider == .claudeCode }
-        let blocks = UsageRollups.blocks(from: claudeOnly)
-        currentBlock = UsageRollups.activeBlock(in: blocks, now: now)
-        peakBlockTokens = UsageRollups.peakBlockTokens(in: blocks, now: now)
+        let period = BillingPeriod.current(
+            containing: now, cycleStartDay: planCycleStartDay, calendar: calendar
+        )
+        let periodAggregate = usageIndex.aggregate(in: period)
+        let periodTotals = CostEngine.totals(for: periodAggregate, resolver: resolver)
+        planValue = PlanValue(
+            plan: subscriptionPlan,
+            monthlyPriceUSD: planMonthlyPriceUSD,
+            period: period,
+            observedCostUSD: periodTotals.cost,
+            eventCount: periodAggregate.eventCount,
+            unpricedModels: periodTotals.unpricedModels,
+            isPartialPeriod: (earliestEventAt ?? now) > period.start
+        )
+
+        cacheEfficiency = CacheEfficiency.make(
+            aggregate: periodAggregate, resolver: resolver
+        )
+
+        ollamaTodayTokens = isOllamaTrackingEnabled ? todayAggregate.ollamaTokens : 0
+
+        // Blocks are the one window that doesn't align to day boundaries, so
+        // they're still reconstructed from raw events — cheap next to the
+        // aggregates, and only when new events actually arrived.
+        if blocksDirty {
+            blocksDirty = false
+            let claudeOnly = events.filter { $0.provider == .claudeCode }
+            let blocks = UsageRollups.blocks(from: claudeOnly)
+            cachedActiveBlocks = blocks
+        }
+        currentBlock = UsageRollups.activeBlock(in: cachedActiveBlocks, now: now)
+        peakBlockTokens = UsageRollups.peakBlockTokens(in: cachedActiveBlocks, now: now)
+
+        // Last, so every window it reads (block included) is already current.
+        evaluateBudgets(now: now, calendar: calendar)
 
         publishWidgetSnapshot()
+    }
+
+    // MARK: - Budget evaluation
+
+    /// Current usage for a scope, in that scope's unit. `nil` when the window
+    /// has nothing to measure yet (no active block, nothing priced).
+    private func budgetUsage(for scope: BudgetScope) -> Decimal? {
+        switch scope {
+        case .block:
+            guard let block = currentBlock else { return nil }
+            return Decimal(block.tokens.total)
+        case .daily:
+            return todaySummary.estimatedCostUSD
+        case .weekly:
+            return weekSummary.estimatedCostUSD
+        case .billingPeriod:
+            return planValue.observedCostUSD
+        }
+    }
+
+    /// The ceiling for a scope. The block scope reuses the reference already
+    /// configured in Usage Windows rather than asking for the same number
+    /// twice; everything else uses the budget's own limit.
+    private func budgetLimit(for budget: Budget) -> Decimal? {
+        guard budget.scope == .block else {
+            return budget.limit > 0 ? budget.limit : nil
+        }
+        let mode = BlockReferenceMode(
+            rawValue: UserDefaults.standard.string(forKey: PreferenceKey.blockReferenceMode) ?? ""
+        ) ?? .off
+        let custom = UserDefaults.standard.integer(forKey: PreferenceKey.blockReferenceCustomTokens)
+        guard let reference = BlockReference.tokens(
+            mode: mode, custom: custom, peak: peakBlockTokens
+        ) else { return nil }
+        return Decimal(reference)
+    }
+
+    private func evaluateBudgets(now: Date, calendar: Calendar) {
+        guard hasEnabledBudget, notificationPermission.canPost else { return }
+
+        var alerts: [BudgetAlert] = []
+        var activeKeys: Set<String> = []
+
+        for scope in BudgetScope.allCases {
+            let budget = budget(for: scope)
+            guard budget.isEnabled else { continue }
+            guard
+                let windowKey = BudgetEvaluator.windowKey(
+                    for: scope,
+                    now: now,
+                    blockStart: currentBlock?.start,
+                    billingPeriodStart: planValue.period.start,
+                    calendar: calendar
+                ),
+                let used = budgetUsage(for: scope),
+                let limit = budgetLimit(for: budget)
+            else { continue }
+
+            activeKeys.insert(BudgetAlertLedger.activeKey(scope, windowKey))
+
+            if let alert = BudgetEvaluator.evaluate(
+                budget: budget,
+                used: used,
+                limit: limit,
+                windowKey: windowKey,
+                ledger: &alertLedger
+            ) {
+                alerts.append(alert)
+            }
+        }
+
+        // Windows that rolled over drop out of the ledger, so it stays small
+        // no matter how long the app runs.
+        alertLedger.prune(keeping: activeKeys)
+
+        guard !alerts.isEmpty else { return }
+        persistLedger()
+        let notifier = self.notifier
+        Task {
+            for alert in alerts {
+                await notifier.post(alert)
+            }
+        }
     }
 
     // MARK: - Widget snapshot

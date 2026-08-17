@@ -43,6 +43,142 @@ struct ModelPricingTests {
         #expect(CostEngine.cost(tokens: tokens, pricing: pricing) == 40)
     }
 
+    // MARK: - Cache-write TTL tiers
+
+    /// Opus-shaped pricing with an explicit 1-hour tier (2x input).
+    private let tieredPricing = ModelPricing(
+        inputPerMTok: 5,
+        outputPerMTok: 25,
+        cacheReadPerMTok: Decimal(string: "0.5")!,
+        cacheWritePerMTok: Decimal(string: "6.25")!,
+        cacheWrite1hPerMTok: 10
+    )
+
+    @Test("1-hour cache writes bill at the 1h rate, 5-minute at the base rate")
+    func cacheWriteTiersBillSeparately() {
+        let tokens = TokenCounts(
+            cacheCreation: 2_000_000,
+            cacheCreation5m: 500_000,
+            cacheCreation1h: 1_500_000
+        )
+        // 0.5M×6.25 + 1.5M×10 = 3.125 + 15 = 18.125
+        #expect(CostEngine.cost(tokens: tokens, pricing: tieredPricing) == Decimal(string: "18.125")!)
+    }
+
+    @Test("a flat cache total with no TTL split bills entirely at the base rate")
+    func untieredCacheWriteUnchanged() {
+        let tokens = TokenCounts(cacheCreation: 2_000_000)
+        // Whole 2M at 6.25 = 12.5 — identical to pre-V2 behaviour.
+        #expect(CostEngine.cost(tokens: tokens, pricing: tieredPricing) == Decimal(string: "12.5")!)
+    }
+
+    @Test("tokens the provider left unattributed fall back to the base rate")
+    func partiallyTieredCacheWrite() {
+        let tokens = TokenCounts(
+            cacheCreation: 1_000_000,
+            cacheCreation5m: 200_000,
+            cacheCreation1h: 300_000
+        )
+        // 0.5M unattributed + 0.2M at 6.25, 0.3M at 10 = 4.375 + 3 = 7.375
+        #expect(CostEngine.cost(tokens: tokens, pricing: tieredPricing) == Decimal(string: "7.375")!)
+    }
+
+    @Test("tiers overshooting the total never produce negative cost")
+    func overshootingTiersClamped() {
+        let tokens = TokenCounts(
+            cacheCreation: 100_000,
+            cacheCreation5m: 100_000,
+            cacheCreation1h: 100_000
+        )
+        #expect(tokens.cacheCreationUntiered == 0)
+        #expect(CostEngine.cost(tokens: tokens, pricing: tieredPricing) > 0)
+    }
+
+    @Test("a feed without the 1h tier derives it as 2x base input")
+    func derivedHourlyRate() {
+        let noHourly = ModelPricing(
+            inputPerMTok: 5,
+            outputPerMTok: 25,
+            cacheWritePerMTok: Decimal(string: "6.25")!
+        )
+        #expect(noHourly.effectiveCacheWrite1hPerMTok == 10)
+
+        let tokens = TokenCounts(cacheCreation: 1_000_000, cacheCreation1h: 1_000_000)
+        #expect(CostEngine.cost(tokens: tokens, pricing: noHourly) == 10)
+    }
+
+    @Test("models without prompt caching never get an invented 1h rate")
+    func noDerivationWithoutCaching() {
+        let uncached = ModelPricing(inputPerMTok: 5, outputPerMTok: 25)
+        #expect(uncached.effectiveCacheWrite1hPerMTok == nil)
+
+        let tokens = TokenCounts(cacheCreation: 1_000_000, cacheCreation1h: 1_000_000)
+        #expect(CostEngine.cost(tokens: tokens, pricing: uncached) == 0)
+    }
+
+    @Test("TokenCounts.total ignores the TTL breakdown so it can't double-count")
+    func totalIgnoresBreakdown() {
+        let tokens = TokenCounts(
+            input: 10,
+            output: 20,
+            cacheRead: 30,
+            cacheCreation: 40,
+            cacheCreation5m: 15,
+            cacheCreation1h: 25
+        )
+        #expect(tokens.total == 100)
+    }
+
+    // MARK: - Server tools
+
+    @Test("web search bills per request, on top of tokens")
+    func webSearchBillsPerRequest() {
+        let pricing = ModelPricing(
+            inputPerMTok: 5,
+            outputPerMTok: 25,
+            webSearchPerRequest: Decimal(string: "0.01")!
+        )
+        let cost = CostEngine.cost(
+            tokens: TokenCounts(input: 1_000_000),
+            pricing: pricing,
+            serverToolUse: ServerToolUse(webSearchRequests: 3, webFetchRequests: 7)
+        )
+        // 1M×5/1e6 = 5, plus 3 searches × $0.01. Fetches are never charged.
+        #expect(cost == Decimal(string: "5.03")!)
+    }
+
+    @Test("web search with no published price contributes nothing")
+    func webSearchUnpricedIsFree() {
+        let cost = CostEngine.cost(
+            tokens: TokenCounts(),
+            pricing: ModelPricing(inputPerMTok: 5, outputPerMTok: 25),
+            serverToolUse: ServerToolUse(webSearchRequests: 100)
+        )
+        #expect(cost == 0)
+    }
+
+    @Test("totals carry each event's server tool usage")
+    func totalsIncludeServerTools() {
+        let resolver = ResolvedPricing(base: [
+            "claude-opus-5": ModelPricing(
+                inputPerMTok: 5,
+                outputPerMTok: 25,
+                webSearchPerRequest: Decimal(string: "0.01")!
+            )
+        ])
+        let searching = UsageEvent(
+            id: "s",
+            provider: .claudeCode,
+            accuracy: .estimated,
+            timestamp: Date(timeIntervalSince1970: 1_780_000_000),
+            model: "claude-opus-5",
+            project: nil,
+            tokens: TokenCounts(),
+            serverToolUse: ServerToolUse(webSearchRequests: 5)
+        )
+        #expect(CostEngine.totals(for: [searching], resolver: resolver).cost == Decimal(string: "0.05")!)
+    }
+
     @Test("decimal math stays exact for small counts")
     func decimalPrecision() {
         let pricing = ModelPricing(inputPerMTok: Decimal(string: "0.25")!, outputPerMTok: Decimal(string: "1.25")!)
@@ -126,5 +262,28 @@ struct ModelPricingTests {
         #expect(opus.outputPerMTok > opus.inputPerMTok)
         #expect(opus.cacheReadPerMTok != nil)
         #expect(opus.cacheWritePerMTok != nil)
+    }
+
+    /// The bundled table is the offline fallback, so a model missing from it
+    /// silently drops out of every cost total on a first launch with no
+    /// network. Regenerate with `make update-pricing` before each release.
+    @Test("bundled feed prices every Claude model the app is likely to meet")
+    func bundledFeedCoversCurrentModels() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Resources/default-pricing.json")
+        let table = try PricingTable.decoder.decode(PricingTable.self, from: Data(contentsOf: url))
+        let resolver = ResolvedPricing(base: table.models)
+
+        for model in ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"] {
+            #expect(resolver.pricing(for: model) != nil, "no bundled price for \(model)")
+        }
+
+        // The 1-hour cache tier has to survive the feed round-trip, or every
+        // long-lived cache write silently bills at the cheaper 5-minute rate.
+        let opus5 = try #require(table.models["claude-opus-5"])
+        #expect(opus5.cacheWrite1hPerMTok == 10)
+        #expect(opus5.webSearchPerRequest == Decimal(string: "0.01")!)
     }
 }

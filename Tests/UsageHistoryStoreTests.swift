@@ -19,7 +19,25 @@ struct UsageHistoryStoreTests {
             timestamp: Date(timeIntervalSince1970: 1_780_000_000),
             model: "claude-sonnet-5",
             project: project,
-            tokens: TokenCounts(input: 5, output: output, cacheRead: 1, cacheCreation: 2)
+            // Carries the V2 columns too, so `roundTrip` proves the cache TTL
+            // split and server-tool counts survive a store round-trip.
+            tokens: TokenCounts(
+                input: 5,
+                output: output,
+                cacheRead: 1,
+                cacheCreation: 200,
+                cacheCreation5m: 50,
+                cacheCreation1h: 150
+            ),
+            serverToolUse: ServerToolUse(webSearchRequests: 4, webFetchRequests: 6),
+            // V3 columns too, so `roundTrip` proves attribution persists.
+            attribution: UsageAttribution(
+                sessionID: "11111111-2222-4333-8444-555555555555",
+                gitBranch: "feature/checkout",
+                agent: "general-purpose",
+                skill: "premium-web-experience",
+                isSidechain: true
+            )
         )
     }
 

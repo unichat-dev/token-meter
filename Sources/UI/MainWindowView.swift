@@ -9,18 +9,35 @@ enum WindowID {
 }
 
 /// Sections of the centralized desktop window.
-enum MainSection: String, CaseIterable, Identifiable, Hashable {
+///
+/// Settings pages are cases here rather than a nested navigator: the window
+/// already owns a sidebar, and putting a second one inside it would bury every
+/// preference two clicks deep behind an unlabeled icon strip. Listing the pages
+/// in the one sidebar makes all of them reachable in a single click.
+enum MainSection: Identifiable, Hashable {
     case overview
     case history
-    case settings
+    case settings(SettingsSection)
 
-    var id: String { rawValue }
+    /// The entry point used when something just wants "open Settings".
+    static let settingsHome = MainSection.settings(.general)
+
+    static let topLevel: [MainSection] = [.overview, .history]
+    static let settingsPages: [MainSection] = SettingsSection.allCases.map { .settings($0) }
+
+    var id: String {
+        switch self {
+        case .overview: "overview"
+        case .history: "history"
+        case .settings(let page): "settings.\(page.rawValue)"
+        }
+    }
 
     var label: String {
         switch self {
         case .overview: "Overview"
         case .history: "History"
-        case .settings: "Settings"
+        case .settings(let page): page.label
         }
     }
 
@@ -28,8 +45,13 @@ enum MainSection: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .overview: "gauge.with.needle"
         case .history: "chart.bar.xaxis"
-        case .settings: "gearshape"
+        case .settings(let page): page.systemImage
         }
+    }
+
+    var settingsPage: SettingsSection? {
+        if case .settings(let page) = self { return page }
+        return nil
     }
 }
 
@@ -48,9 +70,15 @@ struct MainWindowView: View {
 
         NavigationSplitView {
             List(selection: selection) {
-                ForEach(MainSection.allCases) { section in
+                ForEach(MainSection.topLevel) { section in
                     Label(section.label, systemImage: section.systemImage)
                         .tag(section)
+                }
+                Section("Settings") {
+                    ForEach(MainSection.settingsPages) { section in
+                        Label(section.label, systemImage: section.systemImage)
+                            .tag(section)
+                    }
                 }
             }
             .navigationSplitViewColumnWidth(min: 176, ideal: 196, max: 240)
@@ -59,7 +87,7 @@ struct MainWindowView: View {
                 switch model.mainSelection {
                 case .overview: OverviewPane()
                 case .history: HistoryView()
-                case .settings: SettingsTabs().padding(.top, 12)
+                case .settings(let page): SettingsPageView(section: page)
                 }
             }
             .frame(minWidth: 640, minHeight: 540)
@@ -89,6 +117,12 @@ struct OverviewPane: View {
                 header
                 todayGlance
                 tiles
+                if model.planValue.plan.showsValueComparison {
+                    planValuePanel
+                }
+                if model.cacheEfficiency.hasData {
+                    cachePanel
+                }
                 usageWindows
                 sourcesSection
                 footer
@@ -148,6 +182,127 @@ struct OverviewPane: View {
                 systemImage: "archivebox"
             )
         }
+    }
+
+    // MARK: - Plan value
+
+    /// The reframe: the same estimated cost, stated as what it bought against
+    /// what the user pays. This is the answer to "why does it say $2,530 when
+    /// my plan is $20?"
+    private var planValuePanel: some View {
+        let value = model.planValue
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Plan value")
+                    .font(.headline)
+                Spacer()
+                Text(PlanValueFormat.periodLabel(value))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(value.observedCostUSD, format: .currency(code: "USD"))
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    .contentTransition(.numericText())
+                    .monospacedDigit()
+                Text("of usage on a \(value.monthlyPriceUSD.formatted(.currency(code: "USD"))) plan")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let multiple = value.valueMultiple {
+                HStack(spacing: 8) {
+                    Text(PlanValueFormat.multiple(multiple))
+                        .font(.system(.title2, design: .rounded, weight: .bold))
+                        .foregroundStyle(value.hasBrokenEven ? .green : .orange)
+                        .monospacedDigit()
+                    Text(value.hasBrokenEven ? "return on what you pay" : "of the way to breaking even")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(PlanValueFormat.caveat(for: value))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // MARK: - Cache efficiency
+
+    /// Cache reads dominate an agentic-coding bill, so this is the one panel
+    /// that points at something the user can actually change.
+    private var cachePanel: some View {
+        let cache = model.cacheEfficiency
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Prompt caching")
+                    .font(.headline)
+                Spacer()
+                Text(PlanValueFormat.periodLabel(model.planValue))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(cache.savingsUSD, format: .currency(code: "USD"))
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    .foregroundStyle(cache.savingsUSD > 0 ? .green : .primary)
+                    .contentTransition(.numericText())
+                    .monospacedDigit()
+                Text("avoided by caching")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 10) {
+                cacheStat(
+                    "Cache hit rate",
+                    cache.hitRate.formatted(.percent.precision(.fractionLength(0))),
+                    help: "Share of prompt tokens served from cache rather than sent fresh."
+                )
+                cacheStat(
+                    "Cost avoided",
+                    cache.savingsRate.formatted(.percent.precision(.fractionLength(0))),
+                    help: "How much of the uncached figure caching removed."
+                )
+                cacheStat(
+                    "Without caching",
+                    cache.withoutCacheCostUSD.formatted(.currency(code: "USD")),
+                    help: "The same tokens billed with no cache tiers."
+                )
+            }
+
+            Text("Compares your actual estimated cost against the same traffic billed with every cached token charged as ordinary input. A like-for-like comparison of these exact tokens, not a prediction — without caching you'd likely work in shorter sessions and send fewer.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func cacheStat(_ title: String, _ value: String, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(.title3, design: .rounded, weight: .semibold))
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .help(help)
     }
 
     // MARK: - Usage windows

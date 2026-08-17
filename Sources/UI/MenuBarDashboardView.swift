@@ -132,24 +132,21 @@ struct MenuBarDashboardView: View {
     @AppStorage(PreferenceKey.blockReferenceCustomTokens)
     private var customReferenceTokens = 0
 
+    private var referenceMode: BlockReferenceMode {
+        BlockReferenceMode(rawValue: referenceModeRaw) ?? .off
+    }
+
     /// Optional comparison value for the block progress bar. `nil` → no bar.
     private var blockReferenceTokens: Int? {
-        switch BlockReferenceMode(rawValue: referenceModeRaw) ?? .off {
-        case .off:
-            nil
-        case .peak:
-            model.peakBlockTokens > 0 ? model.peakBlockTokens : nil
-        case .custom:
-            customReferenceTokens > 0 ? customReferenceTokens : nil
-        }
+        BlockReference.tokens(
+            mode: referenceMode,
+            custom: customReferenceTokens,
+            peak: model.peakBlockTokens
+        )
     }
 
     private var referenceLabel: String {
-        switch BlockReferenceMode(rawValue: referenceModeRaw) ?? .off {
-        case .off: ""
-        case .peak: "your highest past block"
-        case .custom: "your custom reference"
-        }
+        BlockReference.label(for: referenceMode)
     }
 
     private var usageWindows: some View {
@@ -167,13 +164,13 @@ struct MenuBarDashboardView: View {
                 }
 
                 if let reference = blockReferenceTokens {
-                    ProgressView(
-                        value: Double(min(block.tokens.total, reference)),
-                        total: Double(reference)
+                    let fraction = BlockReference.fraction(
+                        tokens: block.tokens.total, reference: reference
                     )
-                    .controlSize(.small)
-                    .tint(block.tokens.total >= reference ? .orange : .accentColor)
-                    Text("\(percent(block.tokens.total, of: reference)) of \(referenceLabel) — estimated, not your real quota")
+                    ProgressView(value: fraction)
+                        .controlSize(.small)
+                        .tint(block.tokens.total >= reference ? .orange : .accentColor)
+                    Text("\(fraction.formatted(.percent.precision(.fractionLength(0)))) of \(referenceLabel) — estimated, not your real quota")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -210,10 +207,41 @@ struct MenuBarDashboardView: View {
                     .help("\(model.weekSummary.tokens.total.formatted()) tokens this calendar week (estimated)")
             }
 
+            if model.planValue.plan.showsValueComparison {
+                planRow
+            }
+
             if showsOllamaRow {
                 ollamaRow
             }
         }
+    }
+
+    // MARK: - Plan value
+
+    /// One line answering "is this plan worth it this month?" — the popover
+    /// version of the Overview panel.
+    private var planRow: some View {
+        let value = model.planValue
+        return HStack(alignment: .firstTextBaseline) {
+            Label("This period", systemImage: "creditcard")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            if let multiple = value.valueMultiple {
+                Text(PlanValueFormat.multiple(multiple))
+                    .font(.system(.callout, design: .rounded, weight: .semibold))
+                    .foregroundStyle(value.hasBrokenEven ? .green : .secondary)
+                    .contentTransition(.numericText())
+            }
+            Text(value.observedCostUSD, format: .currency(code: "USD"))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .monospacedDigit()
+        }
+        .help(
+            "\(value.observedCostUSD.formatted(.currency(code: "USD"))) of estimated usage against a \(value.monthlyPriceUSD.formatted(.currency(code: "USD"))) plan, \(PlanValueFormat.periodLabel(value)). \(PlanValueFormat.caveat(for: value))"
+        )
     }
 
     // MARK: - Local models (Ollama)
@@ -241,11 +269,6 @@ struct MenuBarDashboardView: View {
                 .contentTransition(.numericText())
                 .help("\(model.ollamaTodayTokens.formatted()) local-model tokens today (measured, no cost). Captured via the proxy — see Settings → Data Sources.")
         }
-    }
-
-    private func percent(_ value: Int, of reference: Int) -> String {
-        let ratio = Double(value) / Double(reference)
-        return ratio.formatted(.percent.precision(.fractionLength(0)))
     }
 
     // MARK: - Watcher status
@@ -299,7 +322,7 @@ struct MenuBarDashboardView: View {
             Spacer()
 
             Button {
-                open(.settings)
+                open(.settingsHome)
             } label: {
                 Label("Settings", systemImage: "gear")
             }

@@ -47,10 +47,7 @@ enum UsageRollups {
 
         for event in sorted {
             if var current = blocks.last, current.contains(event.timestamp) {
-                current.tokens.input += event.tokens.input
-                current.tokens.output += event.tokens.output
-                current.tokens.cacheRead += event.tokens.cacheRead
-                current.tokens.cacheCreation += event.tokens.cacheCreation
+                current.tokens += event.tokens
                 current.eventCount += 1
                 current.lastEventAt = event.timestamp
                 blocks[blocks.count - 1] = current

@@ -41,9 +41,16 @@ struct HistoryView: View {
     @State private var breakdownDimension: BreakdownDimension = .model
     @State private var chartMetric: ChartMetric = .tokens
 
+    /// Claude Code records session, branch, agent and skill on every line, so
+    /// the history pane can answer "what did this branch cost" or "which
+    /// subagent burns the most tokens" — not just "which model".
     enum BreakdownDimension: String, CaseIterable {
         case model = "By model"
         case project = "By project"
+        case branch = "By branch"
+        case session = "By session"
+        case agent = "By agent"
+        case skill = "By skill"
     }
 
     enum ChartMetric: String, CaseIterable {
@@ -131,7 +138,44 @@ struct HistoryView: View {
             }
 
             Spacer()
+            exportMenu
             EstimatedBadge()
+        }
+    }
+
+    /// Exports exactly what's on screen — the selected period — so the file
+    /// always matches the numbers the user is looking at.
+    private var exportMenu: some View {
+        Menu {
+            ForEach(UsageExport.Format.allCases) { format in
+                Button(format.label) { export(format) }
+            }
+        } label: {
+            Label("Export", systemImage: "square.and.arrow.up")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(interval == nil || rangeEvents.isEmpty)
+        .help("Save this period's usage, including per-event cost, session, branch, agent and skill.")
+    }
+
+    private func export(_ format: UsageExport.Format) {
+        guard let interval else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = UsageExport.suggestedFilename(
+            for: interval, format: format, calendar: calendar
+        )
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try model.exportData(in: interval, format: format)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Couldn't save the export"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
         }
     }
 
@@ -277,12 +321,32 @@ struct HistoryView: View {
     // MARK: - Breakdown
 
     private var breakdownRows: [UsageAggregation.CategoryRow] {
+        // "Unattributed" rather than "—": these dimensions are Claude-Code-only,
+        // and rows recorded before attribution shipped genuinely have none.
         let rows = switch breakdownDimension {
         case .model:
             UsageAggregation.totals(events: rangeEvents) { $0.model }
         case .project:
             UsageAggregation.totals(events: rangeEvents, nilLabel: "No project") {
                 $0.project.map { URL(filePath: $0).lastPathComponent }
+            }
+        case .branch:
+            UsageAggregation.totals(events: rangeEvents, nilLabel: "No branch") {
+                $0.attribution.gitBranch
+            }
+        case .session:
+            UsageAggregation.totals(events: rangeEvents, nilLabel: "Unattributed") {
+                // Full session ids are long UUIDs; a short prefix is enough to
+                // tell sessions apart in a chart legend.
+                $0.attribution.sessionID.map { String($0.prefix(8)) }
+            }
+        case .agent:
+            UsageAggregation.totals(events: rangeEvents, nilLabel: "Main thread") {
+                $0.attribution.agent
+            }
+        case .skill:
+            UsageAggregation.totals(events: rangeEvents, nilLabel: "No skill") {
+                $0.attribution.skill
             }
         }
         return Array(rows.prefix(8))

@@ -27,7 +27,12 @@ struct TokenMeterApp: App {
 
     init() {
         let model = AppModel()
-        model.startIfNeeded() // begin log ingestion at launch, not first click
+        // Under XCTest the app is only the test host: starting ingestion here
+        // would open the user's real history store and scan their real logs
+        // on every test run. Tests build their own models and stores.
+        if !RuntimeEnvironment.isRunningTests {
+            model.startIfNeeded() // begin log ingestion at launch, not first click
+        }
         _model = State(initialValue: model)
     }
 
@@ -65,18 +70,94 @@ private struct MenuBarLabel: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
 
+    @AppStorage(PreferenceKey.menuBarMetric)
+    private var metricRaw = MenuBarMetric.todayTokens.rawValue
+
+    @AppStorage(PreferenceKey.blockReferenceMode)
+    private var blockReferenceModeRaw = BlockReferenceMode.off.rawValue
+
+    @AppStorage(PreferenceKey.blockReferenceCustomTokens)
+    private var blockReferenceCustomTokens = 0
+
+    @AppStorage(PreferenceKey.openWindowAtLaunch)
+    private var openWindowAtLaunch = false
+
+    @AppStorage(PreferenceKey.hasCompletedFirstRun)
+    private var hasCompletedFirstRun = false
+
+    private var metric: MenuBarMetric {
+        MenuBarMetric(rawValue: metricRaw) ?? .todayTokens
+    }
+
     var body: some View {
-        Image(systemName: "gauge.with.needle")
-            .task {
-                guard !model.didAutoOpenMainWindow else { return }
-                model.didAutoOpenMainWindow = true
+        // The status item is width-constrained, so the readout is a short
+        // string beside the glyph rather than a full label.
+        HStack(spacing: 4) {
+            Image(systemName: "gauge.with.needle")
+            if let text = readout {
+                Text(text)
+                    .monospacedDigit()
+            }
+        }
+        .task {
+            guard !RuntimeEnvironment.isRunningTests else { return }
+            guard !model.didAutoOpenMainWindow else { return }
+            model.didAutoOpenMainWindow = true
+
+            // First run opens the window once so the app introduces itself and
+            // the permissions flow is discoverable. After that it only opens if
+            // the user asked for it — a login item that seizes the foreground
+            // at every login is the fastest way to get uninstalled.
+            if !hasCompletedFirstRun {
+                hasCompletedFirstRun = true
+                surfaceMainWindow()
+            } else if openWindowAtLaunch {
                 surfaceMainWindow()
             }
-            .onReceive(
-                DistributedNotificationCenter.default().publisher(for: .reopenMainWindow)
-            ) { _ in
-                surfaceMainWindow()
-            }
+        }
+        .onReceive(
+            DistributedNotificationCenter.default().publisher(for: .reopenMainWindow)
+        ) { _ in
+            surfaceMainWindow()
+        }
+    }
+
+    /// The live value shown in the menu bar, or `nil` for icon-only (and for
+    /// metrics whose prerequisite isn't configured — a dash would be noise).
+    private var readout: String? {
+        switch metric {
+        case .iconOnly:
+            return nil
+
+        case .todayTokens:
+            let total = model.todaySummary.tokens.total
+            guard total > 0 else { return nil }
+            return total.formatted(.number.notation(.compactName))
+
+        case .todayCost:
+            guard let cost = model.todaySummary.estimatedCostUSD else { return nil }
+            return cost.formatted(
+                .currency(code: "USD").precision(.fractionLength(cost < 10 ? 2 : 0))
+            )
+
+        case .blockProgress:
+            guard
+                let block = model.currentBlock,
+                let reference = BlockReference.tokens(
+                    mode: BlockReferenceMode(rawValue: blockReferenceModeRaw) ?? .off,
+                    custom: blockReferenceCustomTokens,
+                    peak: model.peakBlockTokens
+                )
+            else { return nil }
+            let fraction = BlockReference.fraction(
+                tokens: block.tokens.total, reference: reference
+            )
+            return fraction.formatted(.percent.precision(.fractionLength(0)))
+
+        case .planMultiple:
+            guard let multiple = model.planValue.valueMultiple else { return nil }
+            return PlanValueFormat.multiple(multiple)
+        }
     }
 
     /// Bring the desktop window forward (opening it if it was closed) and focus
@@ -96,6 +177,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (`LSMultipleInstancesProhibited` blocks the common Finder/Dock relaunch;
     /// this covers launches from a different path or `open -n`.)
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Never hand off + terminate while hosting tests: the "already running"
+        // instance would be the user's installed app, and terminating would
+        // kill the test run itself.
+        guard !RuntimeEnvironment.isRunningTests else { return }
         guard let bundleID = Bundle.main.bundleIdentifier else { return }
         let current = NSRunningApplication.current
         let alreadyRunning = NSRunningApplication

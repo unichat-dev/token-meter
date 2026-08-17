@@ -18,7 +18,7 @@ actor UsageHistoryStore {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appending(path: "UsageHistory.store")
         return try ModelContainer(
-            for: Schema(versionedSchema: UsageHistorySchemaV1.self),
+            for: Schema(versionedSchema: UsageHistorySchemaCurrent.self),
             migrationPlan: UsageHistoryMigrationPlan.self,
             configurations: ModelConfiguration(url: url)
         )
@@ -27,7 +27,7 @@ actor UsageHistoryStore {
     /// Ephemeral container for unit tests.
     static func makeInMemoryContainer() throws -> ModelContainer {
         try ModelContainer(
-            for: Schema(versionedSchema: UsageHistorySchemaV1.self),
+            for: Schema(versionedSchema: UsageHistorySchemaCurrent.self),
             migrationPlan: UsageHistoryMigrationPlan.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )

@@ -70,7 +70,9 @@ enum LiteLLMPricingParser {
                 inputPerMTok: input,
                 outputPerMTok: output,
                 cacheReadPerMTok: perMTok(info["cache_read_input_token_cost"]),
-                cacheWritePerMTok: perMTok(info["cache_creation_input_token_cost"])
+                cacheWritePerMTok: perMTok(info["cache_creation_input_token_cost"]),
+                cacheWrite1hPerMTok: perMTok(info["cache_creation_input_token_cost_above_1hr"]),
+                webSearchPerRequest: webSearchCost(info["search_context_cost_per_query"])
             )
         }
 
@@ -88,5 +90,28 @@ enum LiteLLMPricingParser {
         guard let number = raw as? NSNumber else { return nil }
         let perMillion = number.doubleValue * 1_000_000
         return Decimal(string: String(format: "%.6f", perMillion))
+    }
+
+    /// Upstream reports web-search cost as a per-query object keyed by context
+    /// size (`search_context_size_low/medium/high`). The CLI logs only give us
+    /// a request count with no size, so we take the medium tier as the
+    /// representative rate — for Anthropic all three are identical anyway.
+    /// A plain number is also accepted in case upstream flattens the shape.
+    private static func webSearchCost(_ raw: Any?) -> Decimal? {
+        if let number = raw as? NSNumber {
+            return Decimal(string: String(format: "%.6f", number.doubleValue))
+        }
+        guard let bySize = raw as? [String: Any] else { return nil }
+        let preferred = [
+            "search_context_size_medium",
+            "search_context_size_low",
+            "search_context_size_high",
+        ]
+        for key in preferred {
+            if let number = bySize[key] as? NSNumber {
+                return Decimal(string: String(format: "%.6f", number.doubleValue))
+            }
+        }
+        return nil
     }
 }

@@ -9,7 +9,43 @@ struct ModelPricing: Sendable, Codable, Equatable {
     var inputPerMTok: Decimal
     var outputPerMTok: Decimal
     var cacheReadPerMTok: Decimal?
+    /// Cache write at the default (5-minute) TTL.
     var cacheWritePerMTok: Decimal?
+    /// Cache write at the 1-hour TTL, which providers price higher than the
+    /// 5-minute tier. Optional: feeds that don't publish it fall back to
+    /// ``derivedCacheWrite1hPerMTok``.
+    var cacheWrite1hPerMTok: Decimal?
+    /// USD for **one** server-side web-search request (not per million).
+    var webSearchPerRequest: Decimal?
+
+    init(
+        inputPerMTok: Decimal,
+        outputPerMTok: Decimal,
+        cacheReadPerMTok: Decimal? = nil,
+        cacheWritePerMTok: Decimal? = nil,
+        cacheWrite1hPerMTok: Decimal? = nil,
+        webSearchPerRequest: Decimal? = nil
+    ) {
+        self.inputPerMTok = inputPerMTok
+        self.outputPerMTok = outputPerMTok
+        self.cacheReadPerMTok = cacheReadPerMTok
+        self.cacheWritePerMTok = cacheWritePerMTok
+        self.cacheWrite1hPerMTok = cacheWrite1hPerMTok
+        self.webSearchPerRequest = webSearchPerRequest
+    }
+
+    /// The 1-hour cache-write rate to actually bill at.
+    ///
+    /// When the feed publishes the tier we use it verbatim. Otherwise we derive
+    /// it as **2x base input** — Anthropic's documented multiplier for a 1-hour
+    /// write (the 5-minute tier is 1.25x). Deriving is gated on the model having
+    /// a 5-minute cache price at all, so models without prompt caching never
+    /// get an invented one.
+    var effectiveCacheWrite1hPerMTok: Decimal? {
+        if let cacheWrite1hPerMTok { return cacheWrite1hPerMTok }
+        guard cacheWritePerMTok != nil else { return nil }
+        return inputPerMTok * 2
+    }
 }
 
 /// The pricing feed document (see `pricing-feed/generate_pricing.py` — the
@@ -70,18 +106,39 @@ struct ResolvedPricing: Sendable, Equatable {
 /// Turns token counts into estimated USD. Pure `Decimal` math — no floating
 /// point drift in money.
 enum CostEngine {
-    /// Cost of one event's tokens at the given pricing. Cache tiers without
-    /// a price contribute nothing (never guessed).
-    static func cost(tokens: TokenCounts, pricing: ModelPricing) -> Decimal {
-        var total = Decimal(tokens.input) * pricing.inputPerMTok
-        total += Decimal(tokens.output) * pricing.outputPerMTok
+    /// Cost of one event at the given pricing. Tiers without a price
+    /// contribute nothing (never guessed).
+    ///
+    /// Cache writes bill by TTL: the 5-minute portion (plus anything the
+    /// provider left unattributed) at the base write rate, the 1-hour portion
+    /// at the higher rate. Sources that report only a flat total land entirely
+    /// in the untiered bucket and bill exactly as they did before.
+    static func cost(
+        tokens: TokenCounts,
+        pricing: ModelPricing,
+        serverToolUse: ServerToolUse = ServerToolUse()
+    ) -> Decimal {
+        var perMillion = Decimal(tokens.input) * pricing.inputPerMTok
+        perMillion += Decimal(tokens.output) * pricing.outputPerMTok
         if let read = pricing.cacheReadPerMTok {
-            total += Decimal(tokens.cacheRead) * read
+            perMillion += Decimal(tokens.cacheRead) * read
         }
         if let write = pricing.cacheWritePerMTok {
-            total += Decimal(tokens.cacheCreation) * write
+            perMillion += Decimal(tokens.cacheCreation5m + tokens.cacheCreationUntiered) * write
         }
-        return total / 1_000_000
+        if let hourly = pricing.effectiveCacheWrite1hPerMTok {
+            perMillion += Decimal(tokens.cacheCreation1h) * hourly
+        }
+
+        var total = perMillion / 1_000_000
+
+        // Server tools are priced per request, not per token, so they're added
+        // after the per-million divide. Web fetch carries no per-request charge
+        // — its cost already arrives as tokens.
+        if let perSearch = pricing.webSearchPerRequest {
+            total += Decimal(serverToolUse.webSearchRequests) * perSearch
+        }
+        return total
     }
 
     struct Totals: Equatable, Sendable {
@@ -105,7 +162,11 @@ enum CostEngine {
             // entirely rather than flagging them as pricing gaps.
             guard event.provider.isMetered else { continue }
             if let pricing = resolver.pricing(for: event.model) {
-                totals.cost += cost(tokens: event.tokens, pricing: pricing)
+                totals.cost += cost(
+                    tokens: event.tokens,
+                    pricing: pricing,
+                    serverToolUse: event.serverToolUse
+                )
                 totals.pricedEventCount += 1
             } else {
                 totals.unpricedModels.insert(event.model)

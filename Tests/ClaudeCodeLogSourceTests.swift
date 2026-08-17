@@ -13,7 +13,10 @@ struct ClaudeCodeLogSourceTests {
         ClaudeCodeLogSource(
             locator: ClaudeCodeLogLocator(pathOverride: root.path),
             watcher: watcher,
-            rootPollInterval: .milliseconds(50)
+            rootPollInterval: .milliseconds(50),
+            // No persisted offsets: these tests must re-read their temp fixtures
+            // from scratch, and must never touch the real Application Support.
+            stateStore: nil
         )
     }
 

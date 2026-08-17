@@ -22,10 +22,7 @@ struct UsageSummary: Sendable, Equatable {
     /// Folds one event into the summary (no date filtering — callers decide
     /// membership).
     mutating func include(_ event: UsageEvent) {
-        tokens.input += event.tokens.input
-        tokens.output += event.tokens.output
-        tokens.cacheRead += event.tokens.cacheRead
-        tokens.cacheCreation += event.tokens.cacheCreation
+        tokens += event.tokens
         eventCount += 1
         if lastEventAt.map({ event.timestamp > $0 }) ?? true {
             lastEventAt = event.timestamp
