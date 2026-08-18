@@ -41,9 +41,9 @@ That's not a bug, it's the point — see [Plan value](#plan-value) below, which 
 
 ## Screenshots
 
-| Menu-bar dashboard | Desktop window (History) | Widget / floating HUD |
-|---|---|---|
-| ![Menu-bar dashboard](docs/img/menubar.png) | ![History window](docs/img/history.png) | ![Widget](docs/img/widget.png) |
+| Menu-bar dashboard | Desktop window (Overview) | Desktop window (History) | Widget / floating HUD |
+|---|---|---|---|
+| ![Menu-bar dashboard](docs/img/menubar.png) | ![Overview window](docs/img/overview.png) | ![History window](docs/img/history.png) | ![Widget](docs/img/widget.png) |
 
 ---
 
