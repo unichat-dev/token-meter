@@ -1,6 +1,6 @@
 {
  "schemaVersion": 1,
- "generatedAt": "2026-08-21T05:48:27Z",
+ "generatedAt": "2026-08-24T05:53:49Z",
  "source": "litellm/model_prices_and_context_window.json (MIT)",
  "note": "Community-maintained estimates, not vendor invoices.",
  "models": {
@@ -600,10 +600,10 @@
    "webSearchPerRequest": 0.01
   },
   "gpt-5.6": {
-   "inputPerMTok": 5.0,
-   "outputPerMTok": 30.0,
-   "cacheReadPerMTok": 0.5,
-   "cacheWritePerMTok": 6.25,
+   "inputPerMTok": 4.0,
+   "outputPerMTok": 20.0,
+   "cacheReadPerMTok": 0.4,
+   "cacheWritePerMTok": 5.0,
    "webSearchPerRequest": 0.01
   },
   "gpt-5.6-cyber": {
@@ -620,10 +620,10 @@
    "webSearchPerRequest": 0.01
   },
   "gpt-5.6-sol": {
-   "inputPerMTok": 5.0,
-   "outputPerMTok": 30.0,
-   "cacheReadPerMTok": 0.5,
-   "cacheWritePerMTok": 6.25,
+   "inputPerMTok": 4.0,
+   "outputPerMTok": 20.0,
+   "cacheReadPerMTok": 0.4,
+   "cacheWritePerMTok": 5.0,
    "webSearchPerRequest": 0.01
   },
   "gpt-5.6-terra": {
