@@ -1,6 +1,6 @@
 {
  "schemaVersion": 1,
- "generatedAt": "2026-08-24T05:53:49Z",
+ "generatedAt": "2026-08-28T17:26:45Z",
  "source": "litellm/model_prices_and_context_window.json (MIT)",
  "note": "Community-maintained estimates, not vendor invoices.",
  "models": {
@@ -21,14 +21,14 @@
    "outputPerMTok": 1.25,
    "cacheReadPerMTok": 0.03,
    "cacheWritePerMTok": 0.3,
-   "cacheWrite1hPerMTok": 6.0
+   "cacheWrite1hPerMTok": 0.5
   },
   "claude-3-opus-20240229": {
    "inputPerMTok": 15.0,
    "outputPerMTok": 75.0,
    "cacheReadPerMTok": 1.5,
    "cacheWritePerMTok": 18.75,
-   "cacheWrite1hPerMTok": 6.0
+   "cacheWrite1hPerMTok": 30.0
   },
   "claude-4-opus-20250514": {
    "inputPerMTok": 15.0,
