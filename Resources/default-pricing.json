@@ -1,6 +1,6 @@
 {
  "schemaVersion": 1,
- "generatedAt": "2026-09-23T09:59:28Z",
+ "generatedAt": "2026-09-24T10:01:37Z",
  "source": "litellm/model_prices_and_context_window.json (MIT)",
  "note": "Community-maintained estimates, not vendor invoices.",
  "models": {
@@ -311,6 +311,16 @@
    "outputPerMTok": 10.0,
    "cacheReadPerMTok": 0.125
   },
+  "gpt-5-chat-latest": {
+   "inputPerMTok": 1.25,
+   "outputPerMTok": 10.0,
+   "cacheReadPerMTok": 0.125
+  },
+  "gpt-5-codex": {
+   "inputPerMTok": 1.25,
+   "outputPerMTok": 10.0,
+   "cacheReadPerMTok": 0.125
+  },
   "gpt-5-mini": {
    "inputPerMTok": 0.25,
    "outputPerMTok": 2.0,
@@ -369,6 +379,26 @@
    "cacheReadPerMTok": 0.125,
    "webSearchPerRequest": 0.01
   },
+  "gpt-5.1-chat-latest": {
+   "inputPerMTok": 1.25,
+   "outputPerMTok": 10.0,
+   "cacheReadPerMTok": 0.125
+  },
+  "gpt-5.1-codex": {
+   "inputPerMTok": 1.25,
+   "outputPerMTok": 10.0,
+   "cacheReadPerMTok": 0.125
+  },
+  "gpt-5.1-codex-max": {
+   "inputPerMTok": 1.25,
+   "outputPerMTok": 10.0,
+   "cacheReadPerMTok": 0.125
+  },
+  "gpt-5.1-codex-mini": {
+   "inputPerMTok": 0.25,
+   "outputPerMTok": 2.0,
+   "cacheReadPerMTok": 0.025
+  },
   "gpt-5.2": {
    "inputPerMTok": 1.75,
    "outputPerMTok": 14.0,
@@ -381,6 +411,16 @@
    "cacheReadPerMTok": 0.175,
    "webSearchPerRequest": 0.01
   },
+  "gpt-5.2-chat-latest": {
+   "inputPerMTok": 1.75,
+   "outputPerMTok": 14.0,
+   "cacheReadPerMTok": 0.175
+  },
+  "gpt-5.2-codex": {
+   "inputPerMTok": 1.75,
+   "outputPerMTok": 14.0,
+   "cacheReadPerMTok": 0.175
+  },
   "gpt-5.2-pro": {
    "inputPerMTok": 21.0,
    "outputPerMTok": 168.0,
@@ -390,6 +430,11 @@
    "inputPerMTok": 21.0,
    "outputPerMTok": 168.0,
    "webSearchPerRequest": 0.01
+  },
+  "gpt-5.3-chat-latest": {
+   "inputPerMTok": 1.75,
+   "outputPerMTok": 14.0,
+   "cacheReadPerMTok": 0.175
   },
   "gpt-5.3-codex": {
    "inputPerMTok": 1.75,
@@ -590,6 +635,11 @@
    "cacheReadPerMTok": 0.5,
    "webSearchPerRequest": 0.01
   },
+  "o3-deep-research": {
+   "inputPerMTok": 10.0,
+   "outputPerMTok": 40.0,
+   "cacheReadPerMTok": 2.5
+  },
   "o3-mini": {
    "inputPerMTok": 1.1,
    "outputPerMTok": 4.4,
@@ -621,6 +671,11 @@
    "outputPerMTok": 4.4,
    "cacheReadPerMTok": 0.275,
    "webSearchPerRequest": 0.01
+  },
+  "o4-mini-deep-research": {
+   "inputPerMTok": 2.0,
+   "outputPerMTok": 8.0,
+   "cacheReadPerMTok": 0.5
   }
  }
 }
