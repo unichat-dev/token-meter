@@ -1,6 +1,6 @@
 {
  "schemaVersion": 1,
- "generatedAt": "2026-09-29T11:22:14Z",
+ "generatedAt": "2026-09-30T11:10:16Z",
  "source": "litellm/model_prices_and_context_window.json (MIT)",
  "note": "Community-maintained estimates, not vendor invoices.",
  "models": {
@@ -573,6 +573,13 @@
    "inputPerMTok": 2.0,
    "outputPerMTok": 10.0,
    "cacheReadPerMTok": 0.2,
+   "cacheWritePerMTok": 2.5,
+   "webSearchPerRequest": 0.01
+  },
+  "gpt-6.1-sol": {
+   "inputPerMTok": 2.0,
+   "outputPerMTok": 10.0,
+   "cacheReadPerMTok": 0.1,
    "cacheWritePerMTok": 2.5,
    "webSearchPerRequest": 0.01
   },
