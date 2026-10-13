@@ -1,6 +1,6 @@
 {
  "schemaVersion": 1,
- "generatedAt": "2026-10-10T11:10:59Z",
+ "generatedAt": "2026-10-13T12:42:57Z",
  "source": "litellm/model_prices_and_context_window.json (MIT)",
  "note": "Community-maintained estimates, not vendor invoices.",
  "models": {
@@ -304,7 +304,19 @@
    "cacheReadPerMTok": 0.075,
    "webSearchPerRequest": 0.025
   },
+  "gpt-4o-mini-search-preview-2025-03-11": {
+   "inputPerMTok": 0.15,
+   "outputPerMTok": 0.6,
+   "cacheReadPerMTok": 0.075,
+   "webSearchPerRequest": 0.025
+  },
   "gpt-4o-search-preview": {
+   "inputPerMTok": 2.5,
+   "outputPerMTok": 10.0,
+   "cacheReadPerMTok": 1.25,
+   "webSearchPerRequest": 0.025
+  },
+  "gpt-4o-search-preview-2025-03-11": {
    "inputPerMTok": 2.5,
    "outputPerMTok": 10.0,
    "cacheReadPerMTok": 1.25,
@@ -607,6 +619,10 @@
    "inputPerMTok": 0.6,
    "outputPerMTok": 2.4
   },
+  "gpt-audio-mini-2025-10-06": {
+   "inputPerMTok": 0.6,
+   "outputPerMTok": 2.4
+  },
   "gpt-audio-mini-2025-12-15": {
    "inputPerMTok": 0.6,
    "outputPerMTok": 2.4
@@ -668,6 +684,11 @@
    "outputPerMTok": 40.0,
    "cacheReadPerMTok": 2.5
   },
+  "o3-deep-research-2025-06-26": {
+   "inputPerMTok": 10.0,
+   "outputPerMTok": 40.0,
+   "cacheReadPerMTok": 2.5
+  },
   "o3-mini": {
    "inputPerMTok": 1.1,
    "outputPerMTok": 4.4,
@@ -701,6 +722,11 @@
    "webSearchPerRequest": 0.01
   },
   "o4-mini-deep-research": {
+   "inputPerMTok": 2.0,
+   "outputPerMTok": 8.0,
+   "cacheReadPerMTok": 0.5
+  },
+  "o4-mini-deep-research-2025-06-26": {
    "inputPerMTok": 2.0,
    "outputPerMTok": 8.0,
    "cacheReadPerMTok": 0.5
