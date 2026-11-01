@@ -1,6 +1,6 @@
 {
  "schemaVersion": 1,
- "generatedAt": "2026-10-31T10:55:37Z",
+ "generatedAt": "2026-11-01T11:50:24Z",
  "source": "litellm/model_prices_and_context_window.json (MIT)",
  "note": "Community-maintained estimates, not vendor invoices.",
  "models": {
@@ -585,6 +585,12 @@
    "outputPerMTok": 50.0,
    "cacheReadPerMTok": 1.0,
    "cacheWritePerMTok": 12.5,
+   "webSearchPerRequest": 0.01
+  },
+  "gpt-6-astra-law": {
+   "inputPerMTok": 10.0,
+   "outputPerMTok": 50.0,
+   "cacheReadPerMTok": 1.0,
    "webSearchPerRequest": 0.01
   },
   "gpt-6-luna": {
